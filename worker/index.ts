@@ -1,36 +1,12 @@
+import { Hono } from "hono";
+import { durableHello } from "./handlers";
 export { MyDurableObject } from './DurableController'
+const app = new Hono();
 
-export const durableHello = async (env: Env) => {
-		// Create a `DurableObjectId` for an instance of the `MemoflowDurableObject`
-		// class named "foo". Requests from all Workers to the instance named
-		// "foo" will go to a single globally unique Durable Object instance.
-		const id: DurableObjectId = env.MY_DURABLE_OBJECT.idFromName("foo");
+// 绑定路由
+app.get('/api/durable-hello', durableHello);
 
-		// Create a stub to open a communication channel with the Durable
-		// Object instance.
-		const stub = env.MY_DURABLE_OBJECT.get(id);
-
-		// Call the `sayHello()` RPC method on the stub to invoke the method on
-		// the remote Durable Object instance
-		const greeting = await stub.sayHello("world, lzp");
-    return greeting;
-};
-
+// 独立导出 scheduled 方法
 export default {
-  async fetch(request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (url.pathname === "/api/name") {
-      return new Response(JSON.stringify({ name: "Cloudflare" }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    if (url.pathname === "/api/durable-hello") {
-      const greeting = await durableHello(env);
-      return new Response(JSON.stringify({ commitMessage: greeting }));
-    }
-
-    return env.ASSETS.fetch(request);
-    // return new Response(null, { status: 404 });
-  },
+  fetch: app.fetch,  // 将 app.fetch 作为 fetch 函数导出
 } satisfies ExportedHandler<Env>;
