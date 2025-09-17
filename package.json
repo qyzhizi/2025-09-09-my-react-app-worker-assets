@@ -13,8 +13,11 @@
 	},
 	"dependencies": {
 		"hono": "^4.7.4",
+		"@hono/oauth-providers": "^0.6.2",
 		"react": "^19.1.1",
-		"react-dom": "^19.1.1"
+		"react-dom": "^19.1.1",
+		"drizzle-orm": "^0.40.0",
+		"uuid": "^11.1.0"
 	},
 	"devDependencies": {
 		"@cloudflare/vite-plugin": "^1.12.3",
@@ -29,6 +32,7 @@
 		"typescript": "~5.8.3",
 		"typescript-eslint": "^8.39.1",
 		"vite": "^7.1.2",
-		"wrangler": "^4.34.0"
+		"wrangler": "^4.34.0",
+		"drizzle-kit": "^0.30.5"
 	}
 }

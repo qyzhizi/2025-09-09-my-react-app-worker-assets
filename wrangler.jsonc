@@ -30,6 +30,15 @@
 	  }
 	]
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hono_db1",
+      "database_id": "df0c8a98-2a17-4977-b9d9-34d795e90fea",
+      "preview_database_id": "df0c8a98-2a17-4977-b9d9-34d795e90fea",
+      "migrations_dir": "drizzle/migrations"
+    }
+  ],
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
