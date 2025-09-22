@@ -1,4 +1,13 @@
-:root {
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 在这里添加你的自定义样式 */
+.custom-class {
+    background-color: #f0f0f0;
+}
+
+/* :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
@@ -65,4 +74,4 @@ button:focus-visible {
   button {
     background-color: #f9f9f9;
   }
-}
+} */
