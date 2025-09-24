@@ -6,7 +6,6 @@
 	"scripts": {
 		"dev": "vite",
 		"build": "tsc -b && vite build",
-		"buildcss": "postcss src/index.css -o dist/styles.css",
 		"lint": "eslint .",
 		"preview": "pnpm run build && vite preview",
 		"deploy": "pnpm run build && wrangler deploy",
