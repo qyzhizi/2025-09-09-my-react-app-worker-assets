@@ -11,11 +11,4 @@
 			"path": "./tsconfig.worker.json"
 		}
 	],
-	// "compilerOptions": {
-    // /* Skip type checking all .d.ts files. */
-	// 	// "skipLibCheck": true,
-	// 	"types": [
-	// 		"./worker-configuration.d.ts"
-	// 	]
-	// }
 }

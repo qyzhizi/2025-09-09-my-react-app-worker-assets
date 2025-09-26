@@ -1,12 +1,18 @@
 import type { Context } from "hono";
+import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 
-import { fetchAccessToken, fetchGitHubUserInfo } from './githubauth/tokenService'
-import { addOrUpdategithubAppAccessData } from "./infrastructure/githubAppAccess";
+import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService'
+import {durableHello,
+  durableCreateGithubPushParamsTask,
+  durableProcessGithubPush} from "@/callDurable"
+import { findManyUsers } from "@/infrastructure/user";
+import { addOrUpdategithubAppAccessData } from "@/infrastructure/githubAppAccess";
 import { safeUpdateGithubAppAccessByUserId,
-} from "./infrastructure/githubAppAccess"
-import { findManyUsers } from "./infrastructure/user";
+  findGithubAppAccessByUserId
+} from "@/infrastructure/githubAppAccess"
+import type { PushGitRepoTaskParams } from "@/types/durable";
 
 const VALIDATION_TARGET = {
   QUERY: "query",
@@ -98,23 +104,74 @@ export async function setGithubRepoHandler(c: Context<{ Bindings: Env }>): Promi
   }
 }
 
-export const durableHello = async (c: Context) => {
-		// Create a `DurableObjectId` for an instance of the `MemoflowDurableObject`
-		// class named "foo". Requests from all Workers to the instance named
-		// "foo" will go to a single globally unique Durable Object instance.
-		const id: DurableObjectId = c.env.MY_DURABLE_OBJECT.idFromName("foo");
-
-		// Create a stub to open a communication channel with the Durable
-		// Object instance.
-		const stub = c.env.MY_DURABLE_OBJECT.get(id);
-
-		// Call the `sayHello()` RPC method on the stub to invoke the method on
-		// the remote Durable Object instance
-		const greeting = await stub.sayHello("world, lzp");
-    return c.json({ commitMessage: greeting });
+export const durableHelloHandler = async (c: Context) => {
+  return durableHello(c);
 };
 
-export const getUsers = async (c: Context) => {
-	const users = await findManyUsers(c);
-	return c.json({ users: users });
+export const getUsersHandler = async (c: Context) => {
+    const users = await findManyUsers(c);
+    return c.json({ users: users });
+};
+
+export async function addLogHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  try {
+    const body = await c.req.json()
+    const content = body.content
+
+    if (!content || typeof content !== 'string' || content.trim() === '') {
+      return c.json({ error: 'Empty content' }, 400)
+    }
+
+    const taskId = nanoid()
+    const now = new Date().toISOString()
+
+    const logEntry = {
+      message: "update",
+      filePath: "test1.md",
+      content,
+      created_at: now,
+      taskId: taskId,
+    }
+    var existingRecord = await findGithubAppAccessByUserId(c, c.env.USER_ID);
+
+    // console.log("existingRecord:", existingRecord)
+    // 先检查 existingRecord 是否存在
+    if (!existingRecord) {
+      return c.json({ error: "GitHub app access record not found" }, 404);
+    }
+    if (!existingRecord.githubRepoName){
+      return c.json({ error: "githubRepoName is not exist" }, 400);
+    }
+    if (!existingRecord.accessToken || !existingRecord.githubUserName || !existingRecord.githubRepoName) {
+      // console.log("existingRecord:", existingRecord)
+      return c.json({ error: "Incomplete GitHub access record" }, 400);
+    }
+    const taskParams: Partial<PushGitRepoTaskParams> = {
+      id: logEntry.taskId,
+      commitMessage: logEntry.message,
+      accessToken: existingRecord.accessToken,
+      githubUserName: existingRecord.githubUserName,
+      repoName: existingRecord.githubRepoName,
+      branch: "main",
+      content: logEntry.content,
+      completed: false,
+      filePath: logEntry.filePath,
+      createdAt: logEntry.created_at,
+    }
+    // const createdTask = await durableCreateTask(c, taskParams)
+    await durableCreateGithubPushParamsTask(c, taskParams)
+    // console.log("createdTask:", createdTask)
+    
+    // 调用 fetchMemoflowTask 函数
+    try {
+      const result = await durableProcessGithubPush(c, taskId);
+      return c.json(result);
+    } catch (error) {
+      console.error("Error in fetchMemoflowTaskHandler:", error);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  } catch (err) {
+    console.error('Error in addLogHandler:', err)
+    return c.json({ error: 'Internal Server Error' }, 500)
+  }
 }

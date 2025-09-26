@@ -1,19 +1,20 @@
 import { Hono} from 'hono'
 
-import { BASE_PATH } from "./ConstVar";
+import { BASE_PATH } from "@/ConstVar";
 import { 
   configAuthMiddleware,
   registerGithubLoginHandler
-} from "./middleware/auth";
+} from "@/middleware/auth";
 import { 
   githubAppAuthCallbackHandler, 
   githubAuthHandler, 
   setGithubRepoHandler,
   helloZValidator,
   helloHandler,
-  getUsers,
-  durableHello
- } from './handler'
+  getUsersHandler,
+  durableHelloHandler,
+  addLogHandler,
+ } from '@/handler'
 
 const app = new Hono().basePath(BASE_PATH)
 configAuthMiddleware(app); // 配置认证中间件
@@ -29,9 +30,11 @@ app.post('/github/set-repo', setGithubRepoHandler)
 
 app.get('/hello', helloZValidator, helloHandler)
 
-app.get('/durable-hello', durableHello);
+app.get('/durable-hello', durableHelloHandler);
 
-app.get("/users", getUsers);
+app.get("/users", getUsersHandler);
+
+app.post('/diary-log/addlog', addLogHandler)
 
 // 独立导出 scheduled 方法
 export default {
