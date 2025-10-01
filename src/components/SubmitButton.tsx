@@ -12,7 +12,7 @@ const SubmitButton : React.FC<SubmitButtonProps>  = ({ onClick }) => {
       <div className="shrink-0 flex flex-row items-center">
         <button
           id="submit"
-          className="flex flex-row items-center justify-center css-button-save"
+          className="flex flex-row items-center justify-center bg-blue-500 hover:bg-blue-600 text-white font-medium px-3 py-1 rounded"
           type="button"
           onClick={onClick}
         >

@@ -46,7 +46,7 @@ export const SetGitHubRepo = () => {
           placeholder="输入 GitHub 仓库名"
           value={repo}
           onChange={handleChange}
-          className="flex-grow bg-transparent focus:outline-none"
+          className="flex-grow bg-transparent focus:outline-none text-white placeholder-gray-400" 
         />
         <button
           onClick={handleSetRepo}
