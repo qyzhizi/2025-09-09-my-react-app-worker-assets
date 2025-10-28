@@ -24,7 +24,7 @@ export const Header = () => (
 export const App = ({ children }: { children: any }) => (
   <div>
     <Header />
-    <div className="max-w-5xl mx-auto">
+    <div className="max-w-5xl mx-auto bg-white dark:bg-gray-900 text-black dark:text-white">
       {children}
     </div>
   </div>
