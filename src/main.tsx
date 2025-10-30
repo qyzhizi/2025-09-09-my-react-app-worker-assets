@@ -3,7 +3,7 @@ import './index.css'
 import {useState, useEffect} from 'react'
 import type { FC, ReactNode  } from 'react'
 
-import { App, Home, Pictures, Contact, Chatgpt } from './components/Components'
+import { App } from './components/Components'
 import LogInput from './components/LogInput'
 import { Login } from './components/Login'
 import { createRoot } from 'react-dom/client'
@@ -11,10 +11,6 @@ import { createRoot } from 'react-dom/client'
 // 路由映射：路径对应渲染组件
 const routes: { [key: string]: () => ReactNode } = {
   '/': () => <Login/>,
-  '/home': () => <Home />,
-  '/pictures': () => <Pictures />,
-  '/contact': () => <Contact />,
-  '/chatgpt': () => <Chatgpt />,
   '/loginput': () => <LogInput/>
 }
 

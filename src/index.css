@@ -2,14 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+@layer base {
+  html, body {
+    @apply w-full h-full;
+  }
+
+  body {
+    @apply bg-white text-gray-900 dark:bg-gray-900 dark:text-white
+           flex justify-center
+           transition-colors duration-500;
+  }
+  #root {
+    @apply w-full h-screen flex;
+  }
 }
-/* 在这里添加你的自定义样式 */
-.custom-class {
-    background-color: #f0f0f0;
-}
+
+
 /* :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
