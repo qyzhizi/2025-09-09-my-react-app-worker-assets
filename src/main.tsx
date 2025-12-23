@@ -6,12 +6,14 @@ import type { FC, ReactNode  } from 'react'
 import { App } from './components/Components'
 import LogInput from './components/LogInput'
 import { Login } from './components/Login'
+import SettingsPage from './components/settings/MainPage'
 import { createRoot } from 'react-dom/client'
 
 // 路由映射：路径对应渲染组件
 const routes: { [key: string]: () => ReactNode } = {
   '/': () => <Login/>,
-  '/loginput': () => <LogInput/>
+  '/loginput': () => <LogInput/>,
+  '/settings-page': () => <SettingsPage/>,
 }
 
 // // 定义一个简单的 Link 组件，拦截点击事件并使用 History API 进行 SPA 导航

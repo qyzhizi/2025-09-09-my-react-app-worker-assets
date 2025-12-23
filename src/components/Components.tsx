@@ -41,9 +41,10 @@ export const Header = ({
         className={`
           fixed md:relative
           top-0 left-0
+          p-3
           h-full md:h-screen
           w-48 md:w-64
-          bg-gray-100 dark:bg-gray-800 
+          bg-gray-100 dark:bg-gray-900 
           shadow-md
           z-50
           transform transition-transform duration-300 ease-in-out
@@ -72,6 +73,9 @@ export const Header = ({
           </a>
           <a className="px-6 py-3 hover:bg-gray-200 dark:hover:bg-gray-700 block" href="/loginput">
             loginput
+          </a>
+          <a className="px-6 py-3 hover:bg-gray-200 dark:hover:bg-gray-700 block" href="/settings-page">
+            settings
           </a>
           <a
             href="http://rin.qyzhizi.cn/"
@@ -133,7 +137,7 @@ export const App = ({ children }: { children: any }) => {
         
         <div 
           ref={contentRef}
-          className="flex-1 p-6 bg-white dark:bg-gray-900 text-black dark:text-white overflow-y-auto overflow-x-hidden"
+          className="flex-1 p-6 bg-gray-100 dark:bg-gray-900 text-black dark:text-white overflow-y-auto overflow-x-hidden"
         >
           {children}
         </div>
