@@ -8,12 +8,16 @@ import LogInput from './components/LogInput'
 import { Login } from './components/Login'
 import SettingsPage from './components/settings/MainPage'
 import { createRoot } from 'react-dom/client'
+import LocalStoreApp from './localStoreApp'
+
+import './sw-register';
 
 // 路由映射：路径对应渲染组件
 const routes: { [key: string]: () => ReactNode } = {
   '/': () => <Login/>,
   '/loginput': () => <LogInput/>,
   '/settings-page': () => <SettingsPage/>,
+  '/local-store': () => <LocalStoreApp/>,
 }
 
 // // 定义一个简单的 Link 组件，拦截点击事件并使用 History API 进行 SPA 导航
@@ -41,7 +45,7 @@ const AppRouter: FC = () => {
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  const Component = routes[route] || (() => <div>Not Found</div>)
+  const Component = routes[route] || (() => <div>Not Found hhh</div>)
   return <App>{Component()}</App>
 }
 

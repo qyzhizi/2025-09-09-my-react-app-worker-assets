@@ -74,6 +74,9 @@ export const Header = ({
           <a className="px-6 py-3 hover:bg-gray-200 dark:hover:bg-gray-700 block" href="/loginput">
             loginput
           </a>
+          <a className="px-6 py-3 hover:bg-gray-200 dark:hover:bg-gray-700 block" href="/local-store">
+            local-store
+          </a>          
           <a className="px-6 py-3 hover:bg-gray-200 dark:hover:bg-gray-700 block" href="/settings-page">
             settings
           </a>
