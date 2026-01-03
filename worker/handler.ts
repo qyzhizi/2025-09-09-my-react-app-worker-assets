@@ -1,5 +1,7 @@
 import type { Context } from "hono";
 import { nanoid } from 'nanoid'
+import { setCookie } from "hono/cookie";
+import { sign } from "hono/jwt";
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 
@@ -7,12 +9,13 @@ import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService
 import {durableHello,
   durableCreateGithubPushParamsTask,
   durableProcessGithubPush} from "@/callDurable"
-import { findManyUsers } from "@/infrastructure/user";
+import { findManyUsers, getUserAvatarUrl, findOrCreateUser } from "@/infrastructure/user";
 import { addOrUpdategithubAppAccessData } from "@/infrastructure/githubAppAccess";
 import { safeUpdateGithubAppAccessByUserId,
   findGithubAppAccessByUserId
 } from "@/infrastructure/githubAppAccess"
 import type { PushGitRepoTaskParams } from "@/types/durable";
+import { Provider } from "@/types/provider";
 
 const VALIDATION_TARGET = {
   QUERY: "query",
@@ -28,10 +31,103 @@ const helloQuerySchema = z.object({
 
 export const helloZValidator= zValidator(VALIDATION_TARGET.QUERY, helloQuerySchema)
 
+// 注册 GITHUB_LOGIN_PATH 的路由后续处理函数，处理 GitHub 登录成功后的逻辑，setCookie 设置 JWT token
+export const GithubLoginHandler = async (c: Context) => {
+		const userData = c.get("user-github");
+		
+		if (!userData) {
+			return c.text("GitHub authentication failed", 400);
+		}
+
+		if (!userData.id || !userData.login || !userData.email) {
+			return c.text("Required information could not be retrieved", 400);
+		}
+
+		const user = await findOrCreateUser(
+			c,
+			userData.login,
+			userData.email,
+			userData.avatar_url ?? "",
+			Provider.GitHub,
+			userData.id.toString(),
+		);
+
+		const accessTokenPayload = {
+			sub: user.id.toString(),
+			name: user.name,
+			exp: Math.floor(Date.now() / 1000) + parseInt(c.env.ACCESS_TOKEN_EXPIRY, 10),
+		};
+		const refreshTokenPayload = {
+			sub: user.id.toString(),
+			name: user.name,
+			exp: Math.floor(Date.now() / 1000) + parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10),
+		};
+
+		const accessToken = await sign(
+			accessTokenPayload,
+			c.env.ACCESS_TOKEN_SECRET,
+		);
+		const refreshToken = await sign(
+			refreshTokenPayload,
+			c.env.REFRESH_TOKEN_SECRET,
+		);
+
+		setCookie(c, "access_token", accessToken, {
+			path: "/",
+			httpOnly: true,
+			secure: true,
+			sameSite: "Lax",
+		});
+		setCookie(c, "refresh_token", refreshToken, {
+			path: "/",
+			httpOnly: true,
+			secure: true,
+			sameSite: "Strict",
+		});
+
+		return c.redirect("/");
+};
+
+export const logoutHandler = async (c: Context) => {
+  // 删除 access_token
+  setCookie(c, 'access_token', '', {
+    path: '/',
+    httpOnly: true,
+    secure: true,
+    sameSite: 'Lax',
+    maxAge: 0, // 关键：立即过期
+  })
+
+  // 删除 refresh_token
+  setCookie(c, 'refresh_token', '', {
+    path: '/',
+    httpOnly: true,
+    secure: true,
+    sameSite: 'Strict',
+    maxAge: 0,
+  })
+
+  // 返回成功响应
+  return c.json({ ok: true })
+}
+
 // 处理函数（这里让 TS 自动推断类型）
 export const helloHandler = (c: Parameters<typeof helloZValidator>[0]) => {
   const { name } = c.req.valid(VALIDATION_TARGET.QUERY) // 自动推断为 string
   return c.json({ message: `Hello ${name}!` })
+}
+
+// getAuthInfoHandler
+export const getAuthInfoHandler = async (c: Context<{ 
+    Bindings: Env,
+    Variables: {userId: string, userName: string}
+  }> ): Promise<Response> => {
+  return c.json({
+    user: {
+      id: c.get("userId"),
+      name: c.get("userName"),
+    },
+  })
 }
 
 /**
@@ -61,7 +157,7 @@ export async function githubAppAuthCallbackHandler(c: Context<{ Bindings: Env }>
     };    
     // 尝试更新数据库中 GitHub App 相关数据
     try {
-      await addOrUpdategithubAppAccessData(c, c.env.USER_ID, filteredTokenData)
+      await addOrUpdategithubAppAccessData(c, filteredTokenData)
     } catch (dbError) {
       console.error('更新 GitHub App 访问数据时出错:', dbError)
       return c.json({ error: '更新 GitHub App 访问数据失败' }, 500)
@@ -91,7 +187,7 @@ export async function setGithubRepoHandler(c: Context<{ Bindings: Env }>): Promi
     }
 
     // 执行安全更新
-    await safeUpdateGithubAppAccessByUserId(c, c.env.USER_ID, { githubRepoName });
+    await safeUpdateGithubAppAccessByUserId(c, { githubRepoName });
 
     return c.json({ message: 'GitHub repo name updated successfully' }, 200);
   } catch (err: any) {
@@ -113,6 +209,11 @@ export const getUsersHandler = async (c: Context) => {
     return c.json({ users: users });
 };
 
+export const getUserAvatarUrlHandler = async (c: Context): Promise<Response> => {
+  const avatarUrl = await getUserAvatarUrl(c);
+  return c.json({ avatar_url: avatarUrl });
+};
+
 export async function addLogHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
     const body = await c.req.json()
@@ -132,7 +233,7 @@ export async function addLogHandler(c: Context<{ Bindings: Env }>): Promise<Resp
       created_at: now,
       taskId: taskId,
     }
-    var existingRecord = await findGithubAppAccessByUserId(c, c.env.USER_ID);
+    var existingRecord = await findGithubAppAccessByUserId(c);
 
     // console.log("existingRecord:", existingRecord)
     // 先检查 existingRecord 是否存在

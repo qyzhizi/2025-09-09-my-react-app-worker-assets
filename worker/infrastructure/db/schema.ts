@@ -16,6 +16,7 @@ export const users = sqliteTable("users", {
   salt: text("salt", { length: 255 }),
   diaryTableName: text("diary_table_name", { length: 255 }),
   avatarImage: text("avatar_image"),
+  avatar_url: text("avatar_url"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

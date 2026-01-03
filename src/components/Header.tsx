@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import {AuthButton} from "@/components/AuthButton"
+import {apiFetch} from "@/common";
+import { logout } from "@/components/Logout";
 
 // 左侧导航栏组件
 export const Header = ({ 
@@ -11,6 +14,22 @@ export const Header = ({
   onScrollRight: (deltaY: number) => void;
 }) => {
   const headerRef = useRef<HTMLDivElement>(null);
+  // fetch user information
+  const [userAvatarUrl, setUserAvatarUrl] = useState<string | null>(null);
+  // const { logout } = useAuth()
+
+  useEffect(() => {
+    const fetchUserInfo = async () => {
+      try {
+        const res = await apiFetch("/api/user/avatar-url");
+        const data = await res.json();
+        setUserAvatarUrl(data.avatar_url);
+      } catch (error) {
+        console.error("Failed to fetch user info:", error);
+      }
+    };
+    fetchUserInfo();
+  }, []);
 
   useEffect(() => {
     const el = headerRef.current;
@@ -24,6 +43,7 @@ export const Header = ({
       el.removeEventListener("wheel", handleWheel);
     };
   }, [onScrollRight]);
+
 
   return (
     <>
@@ -53,7 +73,8 @@ export const Header = ({
       >
         {/* 顶部区域 */}
         <div className="p-4 flex justify-between items-center border-b dark:border-gray-700">
-          <span className="text-xl font-semibold">Menu</span>
+          <AuthButton avatarUrl={userAvatarUrl} logout={logout} />
+          {/* <span className="text-xl font-semibold">Menu</span> */}
           {/* 移动端关闭按钮 */}
           <button
             className="md:hidden p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
@@ -95,56 +116,5 @@ export const Header = ({
         </nav>
       </div>
     </>
-  );
-};
-
-// 移动端顶部栏组件
-const MobileTopBar = ({ onMenuClick }: { onMenuClick: () => void }) => {
-  return (
-    <div className="md:hidden sticky top-0 z-30 w-full h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 shadow-sm">
-      <button
-        className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-        onClick={onMenuClick}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none"
-          viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
-      <span className="ml-4 text-lg font-semibold">Memo</span>
-    </div>
-  );
-};
-
-// App 布局组件
-export const App = ({ children }: { children: any }) => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  const handleScrollRight = (deltaY: number) => {
-    if (contentRef.current) {
-      contentRef.current.scrollTop += deltaY;
-    }
-  };
-
-  return (
-    <div className="flex h-screen w-full ">
-      <Header 
-        isOpen={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-        onScrollRight={handleScrollRight}
-      />
-      
-      <div className="flex-1 flex flex-col w-full md:w-auto ">
-        <MobileTopBar onMenuClick={() => setIsSidebarOpen(true)} />
-        
-        <div 
-          ref={contentRef}
-          className="flex-1 p-6 bg-gray-100 dark:bg-gray-900 text-black dark:text-white overflow-y-auto overflow-x-hidden"
-        >
-          {children}
-        </div>
-      </div>
-    </div>
   );
 };

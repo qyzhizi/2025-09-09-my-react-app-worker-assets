@@ -7,10 +7,10 @@ import { tables, githubAppAccess } from "./db/schema";
 
 export const addOrUpdategithubAppAccessData = async (
     c: Context,
-    userId: string,
     data: Record<string, any>
 ): Promise<boolean> => {
     const db = drizzle(c.env.DB, { schema: tables });
+    const userId = c.get("userId");
     
     // Check if user already exists in the table
     const existingRecord = await db.query.githubAppAccess.findFirst({
@@ -37,9 +37,9 @@ export const addOrUpdategithubAppAccessData = async (
 
 export const findGithubAppAccessByUserId = async (
     c: Context,
-    userId: string
   ) => {
     const db = drizzle(c.env.DB, { schema: tables });
+    const userId = c.get("userId");
   
     return db.query.githubAppAccess.findFirst({
       where: (githubAppAccess, { eq }) => eq(githubAppAccess.userId, userId),
@@ -74,15 +74,14 @@ export const findGithubAppAccessByUserId = async (
   
   export const safeUpdateGithubAppAccessByUserId = async (
     c: Context,
-    userId: string,
     updates: Partial<typeof githubAppAccess._.columns>
   ) => {
     const db = drizzle(c.env.DB, { schema: tables });
+    const userId = c.get("userId");
   
     const existing = await db.query.githubAppAccess.findFirst({
       where: (githubAppAccess, { eq }) => eq(githubAppAccess.userId, userId),
     });
-    // console.log("existing: ", existing)
   
     if (!existing) {
       throw new Error(`githubAppAccess record not found for userId: ${userId}`);

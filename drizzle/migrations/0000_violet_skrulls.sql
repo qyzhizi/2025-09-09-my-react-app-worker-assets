@@ -1,4 +1,4 @@
-CREATE TABLE `github_access` (
+CREATE TABLE IF NOT EXISTS `github_access` (
 	`id` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,
 	`github_repo_name` text(255),
@@ -12,7 +12,7 @@ CREATE TABLE `github_access` (
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE TABLE `user_auths` (
+CREATE TABLE IF NOT EXISTS `user_auths` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`user_id` text NOT NULL,
 	`provider_type` integer NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE `user_auths` (
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE TABLE `user_settings` (
+CREATE TABLE IF NOT EXISTS `user_settings` (
 	`user_id` text NOT NULL,
 	`setting_key` text(255) NOT NULL,
 	`setting_value` text,
@@ -30,7 +30,7 @@ CREATE TABLE `user_settings` (
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE TABLE `users` (
+CREATE TABLE IF NOT EXISTS `users` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text,
 	`email` text(255) NOT NULL,
@@ -43,4 +43,4 @@ CREATE TABLE `users` (
 	`updated_at` text DEFAULT (datetime('now')) NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `users_email_unique` ON `users` (`email`);
+CREATE UNIQUE INDEX IF NOT EXISTS `users_email_unique` ON `users` (`email`);

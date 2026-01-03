@@ -8,6 +8,13 @@
       "when": 1758111940951,
       "tag": "0000_violet_skrulls",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1766903339390,
+      "tag": "0001_peaceful_stone_men",
+      "breakpoints": true
     }
   ]
 }

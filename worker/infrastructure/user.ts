@@ -10,12 +10,14 @@ export interface User {
     id: string;
     name: string | null;
     email: string;
+    avatar_url: string | null;
 }
 
 export const findOrCreateUser = async (
     c: Context,
     name: string,
     email: string,
+    avatar_url: string,
     providerType: ProviderType,
     providerUserId: string,
 ): Promise<User> => {
@@ -42,7 +44,7 @@ export const findOrCreateUser = async (
         return user;
     }
     const id = uuidv4();
-    const newUser = await db.insert(users).values({ id, name, email }).returning();
+    const newUser = await db.insert(users).values({ id, name, email, avatar_url }).returning();
 
     try {
         if (newUser.length > 0) {
@@ -69,6 +71,7 @@ export const findManyUsers = async (c: Context): Promise<User[]> => {
           id: true,
           name: true,
           email: true,
+          avatar_url:true,
           username: true,
           password: true,
           salt: true,
@@ -81,3 +84,18 @@ export const findManyUsers = async (c: Context): Promise<User[]> => {
     // console.log(res)
     return res
 };
+
+export const getUserAvatarUrl = async (
+  c: Context<{ 
+    Bindings: Env ,
+    Variables: {userId: string}}>
+  ): Promise<string> =>{
+  const db = drizzle(c.env.DB, { schema: tables });
+  const user = await db.query.users.findFirst({
+    where: (users, { eq }) => eq(users.id, c.get("userId")),
+    columns: {
+      avatar_url: true
+    }
+  });
+  return user?.avatar_url ?? "";
+}

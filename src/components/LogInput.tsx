@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import SubmitButton from './SubmitButton';
 import { SetGitHubRepo } from './SetRepoName'
-import MarkdownEditor from './cm6editor'
+import MarkdownEditor from './MarkdownEditor'
 
 const LogInput = () => {
   const [log, setLog] = useState('');

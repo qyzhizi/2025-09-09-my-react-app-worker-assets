@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import "../assets/cm6Editor/chunmde.bundle.min.js";
+import "@/assets/cm6Editor/chunmde.bundle.min.js";
 
 const { 
   createChunEditor, 

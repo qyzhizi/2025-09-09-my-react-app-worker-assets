@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import GithubSettings from './Github'
 import AccountSettings from './Account';
-import styles from './settingsPage.module.css';  // 导入 CSS 模块
+import styles from './MainSettingPage.module.css';  // 导入 CSS 模块
 
 // 导航项配置
 const navItems = [
@@ -45,7 +45,7 @@ const JianGuoYunSettings = () => (
 );
 
 // 主组件
-export default function SettingsPage() {
+export default function MainSettingPage() {
   const [activeTab, setActiveTab] = useState('account');
 
   const renderContent = () => {

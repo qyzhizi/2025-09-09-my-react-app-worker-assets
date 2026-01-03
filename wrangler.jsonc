@@ -83,7 +83,6 @@
 
 		"CONSUMER_API_KEY": "2a579cb67f0ce7220b9fe4f88698e3931c3929f0bae07ca520489f44f15ff004",
 		"MEMOFLOW_WORKER_URL": "https://worker-assets-durableobject.lepton.workers.dev",
-		"USER_ID": "" 
 	},
 	/**
 	 * Note: Use secrets to store sensitive data.
