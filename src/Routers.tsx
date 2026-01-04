@@ -2,6 +2,7 @@ import type { ReactNode, FC } from 'react'
 
 import LogInput from './components/LogInput'
 import { Login } from './components/Login'
+import { InitRefreshToken } from './components/InitRefreshToken'
 import MainSettingPage from './components/settings/MainSettingPage'
 import LocalStoreApp from './LocalStoreApp'
 
@@ -49,6 +50,11 @@ export const routes: RouteConfig[] = [
     layout: AppLayout,
     auth: true,
   },
+  {
+    path:'/login-callback-init-refresh-token',
+    element: <InitRefreshToken />,
+    layout: EmptyLayout,
+  }
 ]
 
 

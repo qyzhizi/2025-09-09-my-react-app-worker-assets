@@ -7,6 +7,7 @@ export const verifyOrRefreshAccessToken = async (
 	c: Context
 ): Promise<JWTPayload | null> => {
 	let accessToken = getCookie(c, "access_token");
+	const refreshToken = getCookie(c, "refresh_token");
 
 	if (accessToken) {
 		try {
@@ -14,7 +15,6 @@ export const verifyOrRefreshAccessToken = async (
 		} catch {}
 	}
 
-	const refreshToken = getCookie(c, "refresh_token");
 	if (!refreshToken) return null;
 
 	let refreshPayload: JWTPayload;

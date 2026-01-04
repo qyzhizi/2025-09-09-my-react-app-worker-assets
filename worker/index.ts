@@ -1,9 +1,7 @@
 import { Hono} from 'hono'
 
 import { BASE_PATH } from "@/ConstVar";
-import { 
-  configAuthMiddleware,
-} from "@/middleware/auth";
+import { configAuthMiddleware } from "@/middleware/auth";
 import { 
   githubAppAuthCallbackHandler, 
   githubAuthHandler, 
@@ -16,6 +14,7 @@ import {
   addLogHandler,
   getAuthInfoHandler,
   GithubLoginHandler,
+  initRefreshTokenHandler,
   logoutHandler,
  } from '@/handler'
 
@@ -24,8 +23,10 @@ import {
 const app = new Hono().basePath(BASE_PATH)
 configAuthMiddleware(app); // 配置认证中间件
 
-// GitHub login 处理函数
+// GitHub login 处理函数, oAuth 回调路由
 app.get(GITHUB_LOGIN_PATH, GithubLoginHandler);
+// 前端登录后应立即调用此路由初始化 refresh_token
+app.get('/init-refresh-token', initRefreshTokenHandler);
 // 登出路由
 app.post('/logout', logoutHandler);
 

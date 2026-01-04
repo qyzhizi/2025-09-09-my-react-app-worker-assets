@@ -57,19 +57,10 @@ export const GithubLoginHandler = async (c: Context) => {
 			name: user.name,
 			exp: Math.floor(Date.now() / 1000) + parseInt(c.env.ACCESS_TOKEN_EXPIRY, 10),
 		};
-		const refreshTokenPayload = {
-			sub: user.id.toString(),
-			name: user.name,
-			exp: Math.floor(Date.now() / 1000) + parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10),
-		};
 
 		const accessToken = await sign(
 			accessTokenPayload,
 			c.env.ACCESS_TOKEN_SECRET,
-		);
-		const refreshToken = await sign(
-			refreshTokenPayload,
-			c.env.REFRESH_TOKEN_SECRET,
 		);
 
 		setCookie(c, "access_token", accessToken, {
@@ -78,14 +69,31 @@ export const GithubLoginHandler = async (c: Context) => {
 			secure: true,
 			sameSite: "Lax",
 		});
-		setCookie(c, "refresh_token", refreshToken, {
-			path: "/",
-			httpOnly: true,
-			secure: true,
-			sameSite: "Strict",
-		});
 
-		return c.redirect("/");
+    // 跳转到 init-refresh-token 路由，初始化 refresh token
+		return c.redirect("/login-callback-init-refresh-token");
+};
+
+export const initRefreshTokenHandler = async (c: Context) => {
+
+  const refreshTokenPayload = {
+    sub: c.get("userId"),
+    name: c.get("userName"),
+    exp: Math.floor(Date.now() / 1000) + parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10),
+	};
+  
+  const refreshToken = await sign(
+    refreshTokenPayload,
+    c.env.REFRESH_TOKEN_SECRET,
+	);
+
+  setCookie(c, "refresh_token", refreshToken, {
+    path: "/",
+    httpOnly: true,
+    secure: true,
+    sameSite: "Strict",
+  });
+  return c.json({ ok: true });
 };
 
 export const logoutHandler = async (c: Context) => {
