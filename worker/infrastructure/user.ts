@@ -14,7 +14,7 @@ export interface User {
 }
 
 
-export const findOrCreateUser = async (
+export const createOrUpdateUser = async (
   c: Context,
   name: string,
   email: string,
@@ -30,7 +30,7 @@ export const findOrCreateUser = async (
   });
 
   if (existingUser) {
-    await syncUserProfileIfNeeded(db, existingUser, {
+    await updateUserIfNeeded(db, existingUser, {
       name,
       email,
       avatar_url,
@@ -61,7 +61,7 @@ export const findOrCreateUser = async (
   );
 };
 
-const syncUserProfileIfNeeded = async (
+const updateUserIfNeeded = async (
   db: ReturnType<typeof drizzle>,
   user: User,
   updates: Pick<User, "name" | "email" | "avatar_url">,

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 
 import { navigate } from '@/Routers'; // 自定义导航函数
 import { LogoutIcon } from "./Logout"; 
@@ -11,20 +11,7 @@ type AuthButtonProps = {
 
 
 export const AuthButton = ({ avatarUrl, logout }: AuthButtonProps) => {
-  const [open, setOpen] = useState(false);
   const [hover, setHover] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  // 点击外部关闭
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -38,10 +25,10 @@ export const AuthButton = ({ avatarUrl, logout }: AuthButtonProps) => {
   };
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       {/* 触发按钮 */}
       <button
-        onClick={avatarUrl && hover ? handleLogout : () => setOpen(!open)}
+        onClick={avatarUrl && hover ? handleLogout : undefined}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         className="flex items-center justify-center w-9 h-9 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"

@@ -9,7 +9,7 @@ import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService
 import {durableHello,
   durableCreateGithubPushParamsTask,
   durableProcessGithubPush} from "@/callDurable"
-import { findManyUsers, getUserAvatarUrl, findOrCreateUser } from "@/infrastructure/user";
+import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
 import { addOrUpdategithubAppAccessData } from "@/infrastructure/githubAppAccess";
 import { safeUpdateGithubAppAccessByUserId,
   findGithubAppAccessByUserId
@@ -43,7 +43,7 @@ export const GithubLoginHandler = async (c: Context) => {
 			return c.text("Required information could not be retrieved", 400);
 		}
 
-		const user = await findOrCreateUser(
+		const user = await createOrUpdateUser(
 			c,
 			userData.login,
 			userData.email,
