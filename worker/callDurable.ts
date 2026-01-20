@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import type { PushGitRepoTaskParams } from "@/types/durable";
-import { NotFoundError, ValidationError } from "@/error"
+import { NotFoundError, ValidationError } from "@/types/error"
 
 
 export const durableHello = async (c: Context) => {

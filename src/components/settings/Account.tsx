@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { EditAccountModal } from './EditAccount';
-import PasswordChangeModal from './ChangePassword';
+import { apiFetch } from '@/common';
 
 // 用户信息组件
 type UserInfo = {
-  avatar?: string;
-  username: string;
+  id?: string;
+  name: string;
   email?: string;
+  avatarUrl?: string;
 };
 
 function UserInfoCard() {
@@ -63,10 +63,10 @@ function UserInfoCard() {
     <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-md">
       <div className="flex items-center gap-4">
         <div className="flex-shrink-0">
-          {userInfo.avatar ? (
+          {userInfo.avatarUrl ? (
             <img
-              src={userInfo.avatar}
-              alt={userInfo.username}
+              src={userInfo.avatarUrl}
+              alt={userInfo.name}
               className="w-16 h-16 rounded-full object-cover border-2 border-gray-300 dark:border-gray-600"
             />
           ) : (
@@ -79,7 +79,7 @@ function UserInfoCard() {
         </div>
         <div>
           <p className="text-sm text-gray-500 dark:text-gray-400">Username</p>
-          <p className="text-lg font-semibold text-gray-900 dark:text-white">{userInfo.username}</p>
+          <p className="text-lg font-semibold text-gray-900 dark:text-white">{userInfo.name}</p>
           {userInfo.email && (
             <>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Email</p>
@@ -94,20 +94,86 @@ function UserInfoCard() {
 
 
 export default function AccountSettingsUI() {
+  // 同步文件名的状态
   const [currentSyncFilename, setCurrentSyncFilename] = useState('');
-  const [otherSyncFilenames, setOtherSyncFilenames] = useState('');
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [otherSyncFilenames, setOtherSyncFilenames] = useState<string[]>([]);
+  
+  // loadingSyncFile 用于追踪是否正在从 API 获取数据
+  // true = 正在加载，false = 加载完成
+  const [loadingSyncFile, setLoadingSyncFile] = useState(true);
 
+  // 组件加载时自动获取当前同步文件名
+  useEffect(() => {
+    const fetchSyncFileNames = async () => {
+      try {
+        // 开始加载，设置 loading 为 true
+        setLoadingSyncFile(true);
+        
+        // 调用 API 获取当前同步文件名 Current Sync File
+        const response = await fetch('/api/get-sync-file-names');
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch sync file name');
+        }
+        
+        const data = await response.json();
+        
+        // 如果 API 返回的值为空，使用默认值
+        setCurrentSyncFilename(data.current_sync_file || '');
+        setOtherSyncFilenames(Array.isArray(data.other_sync_file_names) ? data.other_sync_file_names : []);
+        
+      } catch (error) {
+        console.error('Error fetching sync file name:', error);
+        // 如果请求失败，使用默认值
+        // setCurrentSyncFilename('/path/default.md');
+      } finally {
+        // 无论成功或失败，都将 loading 设置为 false
+        setLoadingSyncFile(false);
+      }
+    };
 
-  const handleSaveChanges = () => {
+    fetchSyncFileNames();
+  }, []); // 空依赖数组表示只在组件首次渲染时执行一次
+
+  const handleSaveChanges = async () => {
     if (!currentSyncFilename.trim()) {
       alert('Please enter the current sync file name');
       return;
     }
+    // 过滤掉空字符串
+    const filteredOtherSyncFilenames = otherSyncFilenames.filter(filename => filename.trim() !== '');
     console.log('Current Sync Filename:', currentSyncFilename);
-    console.log('Other Sync Filenames:', otherSyncFilenames);
+    console.log('Other Sync Filenames:', filteredOtherSyncFilenames);
+    const response = await apiFetch('/api/update-sync-file-names', {
+      method: 'POST',
+      body: JSON.stringify({ current_sync_file: currentSyncFilename, other_sync_file_names: filteredOtherSyncFilenames }),
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      alert(error.error);
+      throw new Error('Failed to update sync file name');
+    }
+    const data = await response.json();
+    console.log('Sync file name updated successfully:', data);
     alert('Changes saved successfully!');
+  };
+
+  // 添加新的文件路径行
+  const handleAddFilename = () => {
+    setOtherSyncFilenames(['', ...otherSyncFilenames]);
+  };
+
+  // 更新指定索引的文件路径
+  const handleUpdateFilename = (index: number, value: string) => {
+    const newFilenames = [...otherSyncFilenames];
+    newFilenames[index] = value;
+    setOtherSyncFilenames(newFilenames);
+  };
+
+  // 删除指定索引的文件路径
+  const handleDeleteFilename = (index: number) => {
+    const newFilenames = otherSyncFilenames.filter((_, i) => i !== index);
+    setOtherSyncFilenames(newFilenames);
   };
 
   const handlePullFromGithub = () => {
@@ -115,17 +181,9 @@ export default function AccountSettingsUI() {
     alert('Pulling current sync file to database...');
   };
 
-  const handleEditAccount = () => {
-    setIsEditModalOpen(true);
-  };
-
-  const handleChangePassword = () => {
-    setIsPasswordModalOpen(true);
-  };
-
   return (
     <div className="min-h-screen bg-transparent transition-colors duration-300">
-      <div className="p-2 max-w-2xl mx-auto bg-transparent rounded-lg  transition-colors duration-300">
+      <div className="p-2 max-w-2xl mx-auto bg-transparent rounded-lg transition-colors duration-300">
         
         {/* Account Icon */}
         <div className="flex justify-center mb-6">
@@ -144,21 +202,6 @@ export default function AccountSettingsUI() {
 
           {/* User Info Component */}
           <UserInfoCard />
-          
-          <div className="flex flex-col sm:flex-row gap-3 mb-6">
-            <button
-              onClick={handleEditAccount}
-              className="flex-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white text-center py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200"
-            >
-              Edit
-            </button>
-            <button
-              onClick={handleChangePassword}
-              className="flex-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white text-center py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200"
-            >
-              Change Password
-            </button>
-          </div>
         </div>
 
         <hr className="border-t border-gray-200 dark:border-gray-700 my-6" />
@@ -179,22 +222,63 @@ export default function AccountSettingsUI() {
               placeholder="e.g.: /path/1.md"
               value={currentSyncFilename}
               onChange={(e) => setCurrentSyncFilename(e.target.value)}
-              className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 placeholder-gray-500 dark:placeholder-gray-400"
+              // 当正在加载时，禁用输入框，防止用户在数据加载完成前输入
+              disabled={loadingSyncFile}
+              className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 placeholder-gray-500 dark:placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
             />
+            {/* 当正在加载时，显示加载提示 */}
+            {loadingSyncFile && (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">Loading sync file name...</p>
+            )}
           </div>
 
           {/* Other Sync File Names */}
           <div className="mb-6">
-            <label className="block text-gray-900 dark:text-white text-sm font-medium mb-3">
-              (2) Other Sync File Names
-            </label>
-            <input
-              type="text"
-              placeholder="comma-separated paths, e.g.: /path/2.md, /path/3.md"
-              value={otherSyncFilenames}
-              onChange={(e) => setOtherSyncFilenames(e.target.value)}
-              className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 placeholder-gray-500 dark:placeholder-gray-400"
-            />
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-gray-900 dark:text-white text-sm font-medium">
+                (2) Other Sync File Names
+              </label>
+              <button
+                type="button"
+                onClick={handleAddFilename}
+                disabled={loadingSyncFile}
+                className="flex items-center justify-center w-8 h-8 bg-blue-500 dark:bg-blue-600 hover:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-md transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Add new file path"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 448 512" fill="currentColor">
+                  <path d="M256 80c0-17.7-14.3-32-32-32s-32 14.3-32 32V224H48c-17.7 0-32 14.3-32 32s14.3 32 32 32H192V432c0 17.7 14.3 32 32 32s32-14.3 32-32V288H400c17.7 0 32-14.3 32-32s-14.3-32-32-32H256V80z"/>
+                </svg>
+              </button>
+            </div>
+            <div className="space-y-2">
+              {otherSyncFilenames.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 italic">No file paths added. Click the + button to add one.</p>
+              ) : (
+                otherSyncFilenames.map((filename, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="e.g.: /path/file.md"
+                      value={filename}
+                      onChange={(e) => handleUpdateFilename(index, e.target.value)}
+                      disabled={loadingSyncFile}
+                      className="flex-1 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 placeholder-gray-500 dark:placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteFilename(index)}
+                      disabled={loadingSyncFile}
+                      className="flex items-center justify-center w-8 h-8 bg-red-500 dark:bg-red-600 hover:bg-red-600 dark:hover:bg-red-700 text-white rounded-md transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Delete this file path"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" height="14" width="14" viewBox="0 0 448 512" fill="currentColor">
+                        <path d="M135.2 17.7C140.6 6.8 151.7 0 163.8 0H284.2c12.1 0 23.2 6.8 28.6 17.7L320 32h96c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 96 0 81.7 0 64S14.3 32 32 32h96l7.2-14.3zM32 128H416V448c0 35.3-28.7 64-64 64H96c-35.3 0-64-28.7-64-64V128zM111 257c-9.4 9.4-9.4 24.6 0 33.9l47 47-47 47c-9.4 9.4-9.4 24.6 0 33.9s24.6 9.4 33.9 0l47-47 47 47c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-47-47 47-47c9.4-9.4 9.4-24.6 0-33.9s-24.6-9.4-33.9 0l-47 47-47-47c-9.4-9.4-24.6-9.4-33.9 0z"/>
+                      </svg>
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
 
           {/* Save Changes Button */}
@@ -222,12 +306,6 @@ export default function AccountSettingsUI() {
           </button>
         </div>
       </div>
-
-      {/* 编辑账户模态框 */}
-      <EditAccountModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} />
-      <PasswordChangeModal 
-        isOpen={isPasswordModalOpen} 
-        onClose={() => setIsPasswordModalOpen(false)}/>
     </div>
   );
 }

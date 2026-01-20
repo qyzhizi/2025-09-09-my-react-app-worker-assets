@@ -1,15 +1,84 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import {apiFetch} from "@/common";
 
-export default function GithubSettings() {
-  const [gitRepoPath, setGitRepoPath] = useState('');
+interface GithubSettingsProps {
+  successMessage?: string | null;
+  errorMessage?: string | null;
+}
 
-  const handleSave = () => {
-    if (!gitRepoPath.trim()) {
+export default function GithubSettings({ successMessage, errorMessage }: GithubSettingsProps) {
+  const [githubRepoName, setGitHubRepoName] = useState('');
+  // true = 正在加载，false = 加载完成
+  const [loading, setLoading] = useState(true);
+
+  // 组件加载时自动获取当前repoName
+  useEffect(() => {
+    const fetchGitHubRepoName = async () => {
+      try {
+        // 开始加载，设置 loading 为 true
+        setLoading(true);
+        
+        // 调用 API 获取当前 githubRepoName
+        const response = await fetch('/api/get-github-repo-name');
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch githubRepoName');
+        }
+        
+        const data = await response.json();
+        
+        // 如果 API 返回的值为空，使用默认值
+        setGitHubRepoName(data.githubRepoName || '');
+      } catch (error) {
+        console.error('Error fetching githubRepoName:', error);
+      } finally {
+        // 无论成功或失败，都将 loading 设置为 false
+        setLoading(false);
+      }
+    };
+
+    fetchGitHubRepoName();
+  }, []); // 空依赖数组表示只在组件首次渲染时执行一次  
+
+  const handleSave = async () => {
+    if (!githubRepoName.trim()) {
       alert('Please enter a Git repository path');
       return;
     }
-    console.log('Saving repo path:', gitRepoPath);
-    alert('Changes saved! Testing connection...');
+    // console.log('Saving repo path:', githubRepoName);
+    try {
+      const res = await apiFetch("/api/save-repo-and-test-connection", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          githubRepoName,
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (res.status === 400) {
+        alert(data.error || 'Bad Request');
+        return;
+      }
+      
+      if (!res.ok) {
+        alert(data.error || 'An error occurred');
+        return;
+      }
+      
+      // 成功处理
+      if (res.ok) {
+        alert(data.success || 'Repository saved and connection tested successfully!');
+      }
+      
+    } catch (error) {
+      console.error("Failed to fetch user info:", error);
+      alert('Failed to save repository');
+    }
+
   };
 
   return (
@@ -24,6 +93,28 @@ export default function GithubSettings() {
 
         <hr className="border-t border-gray-200 dark:border-gray-700 my-6" />
 
+        {/* 成功/错误消息提示 */}
+        {successMessage && (
+          <div className="mb-4 p-4 bg-green-100 dark:bg-green-900 border border-green-400 dark:border-green-700 text-green-700 dark:text-green-300 rounded-md">
+            <div className="flex items-center">
+              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+              <span>{successMessage}</span>
+            </div>
+          </div>
+        )}
+        {errorMessage && (
+          <div className="mb-4 p-4 bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-300 rounded-md">
+            <div className="flex items-center">
+              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+              <span>{errorMessage}</span>
+            </div>
+          </div>
+        )}
+
         {/* Basic Section */}
         <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-4">
           Basic
@@ -31,36 +122,41 @@ export default function GithubSettings() {
 
         {/* Step 1 */}
         <div className="text-gray-900 dark:text-white text-sm font-medium mb-3">
-          (1) Bind GitHub Repo
+          (1)
         </div>
-        <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <a
+          href="/api/github-app/auth"
+          className="flex-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white text-center py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200"
+        >
+          GitHub Repo Auth
+        </a>
+
+        {/* Step 2 */}
+        <div className="text-gray-900 dark:text-white text-sm font-medium mt-3 mb-3">
+          (2)
+        </div>
+
           <a
-            href="/v1/diary-log/github-authenticate"
-            className="flex-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white text-center py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200"
-          >
-            Bind GitHub Repo
-          </a>
-          <a
-            href="/v1/diary-log/github-app-authenticate"
+            href="/api/github-app-configure"
             target="_blank"
             rel="noopener noreferrer"
             className="flex-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white text-center py-2.5 px-4 rounded-md text-sm font-medium transition-colors duration-200"
           >
-            Authorization GitHub App
+            GitHub App Configure
           </a>
+        
+        {/* Step 3 */}
+        <div className="text-gray-900 dark:text-white text-sm font-medium mt-3 mb-3">
+          (3) GitHub Repo Name
         </div>
-
-        {/* Step 2 */}
-        <div className="text-gray-900 dark:text-white text-sm font-medium mb-3">
-          (2) Git Repo Path
-        </div>
-        <input
-          type="text"
-          placeholder="e.g.: Username/RepoName"
-          value={gitRepoPath}
-          onChange={(e) => setGitRepoPath(e.target.value)}
-          className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 placeholder-gray-500 dark:placeholder-gray-400"
-        />
+          <input
+            type="text"
+            placeholder="e.g.: RepoName"
+            value={githubRepoName}
+            onChange={(e) => setGitHubRepoName(e.target.value)}
+            disabled={loading}
+            className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 placeholder-gray-500 dark:placeholder-gray-400"
+          />
 
         <hr className="border-t border-gray-200 dark:border-gray-700 my-6" />
 
@@ -69,7 +165,7 @@ export default function GithubSettings() {
           onClick={handleSave}
           className="w-full bg-blue-500 dark:bg-blue-600 hover:bg-blue-600 dark:hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-md text-sm transition-colors duration-200 shadow-sm"
         >
-          Save Changes and Test Connection
+          Save Repo and Test Connection
         </button>
       </div>
     </div>

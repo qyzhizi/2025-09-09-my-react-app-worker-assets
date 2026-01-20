@@ -16,6 +16,12 @@ import {
   GithubLoginHandler,
   initRefreshTokenHandler,
   logoutHandler,
+  getUserInfoHandler,
+  getCurrentSyncFileNamesHandler,
+  updateSyncFileNamesHandler,
+  githubAppConfigureHandler,
+  saveRepoAndTestConnectionHandler,
+  getGitHubRepoNameHandler,
  } from '@/handler'
 
  import { GITHUB_LOGIN_PATH } from "./ConstVar";
@@ -35,6 +41,8 @@ app.get('/github-app/auth', githubAuthHandler)
 // GitHub-app 授权回调路由
 app.get('/github-app-auth-callback', githubAppAuthCallbackHandler)
 
+app.get('/github-app-configure', githubAppConfigureHandler)
+
 app.get('/auth/me', getAuthInfoHandler)
 
 app.post('/github/set-repo', setGithubRepoHandler)
@@ -46,9 +54,13 @@ app.get('/durable-hello', durableHelloHandler);
 app.get("/users", getUsersHandler);
 
 app.get("/user/avatar-url", getUserAvatarUrlHandler);
+app.get("/user/info", getUserInfoHandler);
 
 app.post('/diary-log/addlog', addLogHandler)
-
+app.get('/get-sync-file-names', getCurrentSyncFileNamesHandler);
+app.post('/update-sync-file-names', updateSyncFileNamesHandler);
+app.post('/save-repo-and-test-connection', saveRepoAndTestConnectionHandler)
+app.get('/get-github-repo-name', getGitHubRepoNameHandler)
 // 独立导出 scheduled 方法
 export default {
   fetch: app.fetch,  // 将 app.fetch 作为 fetch 函数导出

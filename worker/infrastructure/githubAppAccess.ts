@@ -5,7 +5,7 @@ import type { Context } from "hono";
 
 import { tables, githubAppAccess } from "./db/schema";
 
-export const addOrUpdategithubAppAccessData = async (
+export const addOrUpdateGithubAppAccessData = async (
     c: Context,
     data: Record<string, any>
 ): Promise<boolean> => {
@@ -93,3 +93,11 @@ export const findGithubAppAccessByUserId = async (
       .where(eq(githubAppAccess.userId, userId));
   };
   
+export const getGithubAppAccessInfo = async (c: Context) => {
+  const db = drizzle(c.env.DB, { schema: tables });
+  const userId = c.get("userId");
+
+  return db.query.githubAppAccess.findFirst({
+    where: (githubAppAccess, { eq }) => eq(githubAppAccess.userId, userId),
+  });
+}

@@ -10,12 +10,19 @@ import {durableHello,
   durableCreateGithubPushParamsTask,
   durableProcessGithubPush} from "@/callDurable"
 import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
-import { addOrUpdategithubAppAccessData } from "@/infrastructure/githubAppAccess";
+import { getUserById } from "@/infrastructure/user";
+import { updateUserSettingsToDb, getUserSettingsFromDb } from "@/infrastructure/userSettings";
+import { addOrUpdateGithubAppAccessData } from "@/infrastructure/githubAppAccess";
 import { safeUpdateGithubAppAccessByUserId,
-  findGithubAppAccessByUserId
+  findGithubAppAccessByUserId,
+  getGithubAppAccessInfo, 
 } from "@/infrastructure/githubAppAccess"
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { Provider } from "@/types/provider";
+import { validateGitRepoName } from "@/common"
+import { ValidationError, NotGetAccessTokenError } from "@/types/error"
+import {getOrUpdateGitHubAppAccessInfo} from "@/providers"
+import {testGitHubRepoAcess} from "@/providers"
 
 const VALIDATION_TARGET = {
   QUERY: "query",
@@ -74,7 +81,12 @@ export const GithubLoginHandler = async (c: Context) => {
 		return c.redirect("/login-callback-init-refresh-token");
 };
 
-export const initRefreshTokenHandler = async (c: Context) => {
+export const initRefreshTokenHandler = async (
+  c: Context<{
+    Bindings: Env;
+    Variables: { userId: string; userName: string };
+  }>
+) => {
 
   const refreshTokenPayload = {
     sub: c.get("userId"),
@@ -140,7 +152,7 @@ export const getAuthInfoHandler = async (c: Context<{
 
 /**
  * GitHub 授权回调路由处理函数
- * 该函数从请求中提取 code，然后调用 fetchAccessToken 获取 token，并返回 JSON 响应
+ * 该函数从请求中提取 code，然后调用 fetchAccessToken 获取 token，并重定向到前端设置页面
  */
 export async function githubAppAuthCallbackHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   // 从查询参数中获取 code
@@ -156,24 +168,28 @@ export async function githubAppAuthCallbackHandler(c: Context<{ Bindings: Env }>
   try {
     const tokenData = await fetchAccessToken(CLIENT_ID, CLIENT_SECRET, code)
     const userInfo = await fetchGitHubUserInfo(tokenData.access_token)
+    const now = Date.now(); // utc time
     const filteredTokenData: Record<string, any> = {
       githubUserName: userInfo.login,
       accessToken: tokenData.access_token,
-      accessTokenExpiresAt: new Date(Date.now() + tokenData.expires_in * 1000), // 8小时后过期,
+      accessTokenExpiresAt: new Date(now + tokenData.expires_in * 1000), // 8小时后过期,
       refreshToken: tokenData.refresh_token,
-      refreshTokenExpiresAt: new Date(Date.now() + tokenData.refresh_token_expires_in * 1000) // 184天后过期
-    };    
+      refreshTokenExpiresAt: new Date(now + tokenData.refresh_token_expires_in * 1000) // 184天后过期
+    };
     // 尝试更新数据库中 GitHub App 相关数据
     try {
-      await addOrUpdategithubAppAccessData(c, filteredTokenData)
+      await addOrUpdateGithubAppAccessData(c, filteredTokenData)
     } catch (dbError) {
       console.error('更新 GitHub App 访问数据时出错:', dbError)
-      return c.json({ error: '更新 GitHub App 访问数据失败' }, 500)
+      // 重定向到设置页面，但带上错误参数
+      return c.redirect('/settings-page?github_auth=error&tab=github')
     }
-    return c.json(tokenData)
+    // 成功时重定向到设置页面，并带上成功参数和 tab 参数
+    return c.redirect('/settings-page?github_auth=success&tab=github')
   } catch (error) {
     console.error('获取 access token 过程中出错:', error)
-    return c.json({ error: '获取 access token 失败' }, 500)
+    // 错误时也重定向到设置页面，但带上错误参数
+    return c.redirect('/settings-page?github_auth=error&tab=github')
   }
 }
 
@@ -183,6 +199,11 @@ export const githubAuthHandler = (c: Context<{ Bindings: Env }>) => {
   const clientId = c.env.GITHUB_APP_CLIENT_ID
   const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}`
   return c.redirect(githubAuthUrl)
+}
+
+export async function githubAppConfigureHandler(c: Context<{ Bindings: Env & { GITHUB_APP_URL: string } }>): Promise<Response> {
+  const githubAppUrl = c.env.GITHUB_APP_URL
+  return c.redirect(githubAppUrl ?? "")
 }
 
 export async function setGithubRepoHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
@@ -217,12 +238,24 @@ export const getUsersHandler = async (c: Context) => {
     return c.json({ users: users });
 };
 
-export const getUserAvatarUrlHandler = async (c: Context): Promise<Response> => {
-  const avatarUrl = await getUserAvatarUrl(c);
+export const getUserAvatarUrlHandler = async (
+  c: Context<{
+    Bindings: Env;
+    Variables: { userId: string , userName: string};
+  }>): Promise<Response> => {
+  const avatarUrl = await getUserAvatarUrl(c, c.get("userId"));
   return c.json({ avatar_url: avatarUrl });
 };
 
-export async function addLogHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+export const getUserInfoHandler = async (c: Context<{ Bindings: Env; Variables: { userId: string; userName: string }; }>): Promise<Response> => {
+  const user = await getUserById(c, c.get("userId"));
+  if (!user) {
+    return c.json({ error: "User not found" }, 404);
+  }
+  return c.json({ id: user.id, name: user.name, email: user.email, avatarUrl: user.avatar_url });
+}
+
+export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   try {
     const body = await c.req.json()
     const content = body.content
@@ -283,4 +316,94 @@ export async function addLogHandler(c: Context<{ Bindings: Env }>): Promise<Resp
     console.error('Error in addLogHandler:', err)
     return c.json({ error: 'Internal Server Error' }, 500)
   }
+}
+
+export async function getCurrentSyncFileNamesHandler(
+  c: Context<{
+    Bindings: Env;
+    Variables: { userId: string, userName: string};
+  }>
+): Promise<Response> {
+  try {
+    const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
+    return c.json({ current_sync_file: userSettings["current_sync_file"] ?? null, other_sync_file_names: userSettings["other_sync_file_names"] ? JSON.parse(userSettings["other_sync_file_names"]) : [] });
+  } catch (error) {
+    console.error('Error in getCurrentSyncFileNames Handler:', error);
+    return c.json({ error: 'Internal Server Error' }, 500);
+  }
+}
+
+// update user settings
+export async function updateSyncFileNamesHandler(
+  c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>
+): Promise<Response> {
+  try {
+    const body = await c.req.json()
+    const { current_sync_file, other_sync_file_names } = body
+    if (!current_sync_file || typeof current_sync_file !== 'string' || current_sync_file.trim() === '') {
+      return c.json({ error: 'Empty current_sync_file' }, 400);
+    }
+    // other_sync_file_names 可以为空，但如果传入则必须是数组
+    if (other_sync_file_names && !Array.isArray(other_sync_file_names)) {
+      return c.json({ error: 'Invalid other_sync_file_names, must be an array' }, 400);
+    }
+    await updateUserSettingsToDb(c, c.get("userId"),
+    { "current_sync_file": current_sync_file, "other_sync_file_names": JSON.stringify(other_sync_file_names || []) });
+    return c.json({ message: 'Sync file names updated successfully' }, 200);
+  } catch (error) {
+    console.error('Error in updateSyncFileNamesHandler:', error);
+    return c.json({ error: 'Internal Server Error' }, 500);
+  }
+}
+
+export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  try {
+    const body = await c.req.json()
+    const { githubRepoName } = body
+    console.log("githubRepoName:", githubRepoName)
+    
+    // 验证 repoName
+    try {
+      validateGitRepoName(githubRepoName);
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error; // 重新抛出非 ValidationError 的错误
+    }
+
+    // get settings @todo validate user settings
+    const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
+    console.log("userSettings: ", userSettings)
+
+    const githubAccessInfo = await getOrUpdateGitHubAppAccessInfo(c)
+    if (!githubAccessInfo || !githubAccessInfo.accessToken){
+      throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!")
+    }
+    const accessToken = githubAccessInfo.accessToken
+    const githubUserName = githubAccessInfo.githubUserName
+    if (!githubUserName) {
+      throw new NotGetAccessTokenError("Fail to get GitHub username, Please login GitHub first!")
+    }
+    // console.log("accessToken: ", accessToken)
+
+    try{
+      await safeUpdateGithubAppAccessByUserId(c, { githubRepoName });
+      await testGitHubRepoAcess(accessToken, githubUserName, githubRepoName);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return c.json({"success": "false", "error": errorMessage}, 400)
+    }
+    
+    return c.json({"success": `${githubRepoName} saved, connecting success!`})
+
+  } catch (error) {
+    return c.json({error: 'Internal Server Error'}, 500);
+  }
+}
+
+export async function getGitHubRepoNameHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  const githubAccessInfo = await getGithubAppAccessInfo(c);
+  const githubRepoName = githubAccessInfo?.githubRepoName ?? null
+  return c.json({githubRepoName})
 }

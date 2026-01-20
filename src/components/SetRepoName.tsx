@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '@/common';
 
 interface ApiResponse {
     error?: string;
@@ -17,7 +18,7 @@ export const SetGitHubRepo = () => {
     const handleSetRepo = async () => {
       if (!repo.trim()) return;
       try {
-        const response = await fetch('/api/github/set-repo', {
+        const response = await apiFetch('/api/github/set-repo', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

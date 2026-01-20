@@ -2,6 +2,7 @@ import { useState } from 'react';
 import SubmitButton from './SubmitButton';
 import { SetGitHubRepo } from './SetRepoName'
 import MarkdownEditor from './MarkdownEditor'
+import { apiFetch } from '@/common';
 
 const LogInput = () => {
   const [log, setLog] = useState('');
@@ -15,7 +16,7 @@ const LogInput = () => {
     const fullLog = `## ${dateStr} ${timeStr}:\n` + log;
   
     try {
-      const response = await fetch('/api/diary-log/addlog', {
+      const response = await apiFetch('/api/diary-log/addlog', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

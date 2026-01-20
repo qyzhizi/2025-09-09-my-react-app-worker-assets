@@ -72,14 +72,9 @@
 		// dev
 		"GITHUB_ID": "Ov23lih9i0E6tWevmEdX",
 		"GITHUB_SECRET": "1f509e8ad783e663d027b6395da4193bb377deac",
-    	"GITHUB_APP_CLIENT_ID": "Iv23liuMW2f7wHhmeYHi",
-    	"GITHUB_APP_CLIENT_SECRETS": "4a9cf01fd8bee0ee8f46355e1ccc6780d44dfc92",
-
-		// local
-		// "GITHUB_ID": "Ov23litftCxVTBR4klFG",
-		// "GITHUB_SECRET": "d2ea8f7cd41a4d823c751fa0932ae1b5229c2032",
-    	// "GITHUB_APP_CLIENT_ID": "Iv23liN9QuxMOJdsEpKb",
-    	// "GITHUB_APP_CLIENT_SECRETS": "ded1dda8a66e752f2f8027a5537b87f84907342e",
+    "GITHUB_APP_CLIENT_ID": "Iv23liuMW2f7wHhmeYHi",
+    "GITHUB_APP_CLIENT_SECRETS": "4a9cf01fd8bee0ee8f46355e1ccc6780d44dfc92",
+		"GITHUB_APP_URL": "https://github.com/apps/cloudflare-worker-memoflow-dev",
 
 		"CONSUMER_API_KEY": "2a579cb67f0ce7220b9fe4f88698e3931c3929f0bae07ca520489f44f15ff004",
 		"MEMOFLOW_WORKER_URL": "https://worker-assets-durableobject.lepton.workers.dev",

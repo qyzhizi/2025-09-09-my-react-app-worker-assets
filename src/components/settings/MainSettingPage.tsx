@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 import GithubSettings from './Github'
 import AccountSettings from './Account';
@@ -47,13 +47,44 @@ const JianGuoYunSettings = () => (
 // 主组件
 export default function MainSettingPage() {
   const [activeTab, setActiveTab] = useState('account');
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // 检测 URL 参数，处理 GitHub 授权回调
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const githubAuth = params.get('github_auth');
+    const tab = params.get('tab');
+
+    if (githubAuth === 'success' && tab === 'github') {
+      setActiveTab('github');
+      setSuccessMessage('GitHub 授权成功！');
+      setErrorMessage(null);
+      // 清除 URL 参数，避免刷新时重复显示
+      window.history.replaceState({}, '', '/settings-page');
+      // 3秒后自动清除成功消息
+      setTimeout(() => {
+        setSuccessMessage(null);
+      }, 5000);
+    } else if (githubAuth === 'error' && tab === 'github') {
+      setActiveTab('github');
+      setErrorMessage('GitHub 授权失败，请重试。');
+      setSuccessMessage(null);
+      // 清除 URL 参数
+      window.history.replaceState({}, '', '/settings-page');
+      // 5秒后自动清除错误消息
+      setTimeout(() => {
+        setErrorMessage(null);
+      }, 5000);
+    }
+  }, []);
 
   const renderContent = () => {
     switch (activeTab) {
       case 'account':
         return <AccountSettings />;
       case 'github':
-        return <GithubSettings />;
+        return <GithubSettings successMessage={successMessage} errorMessage={errorMessage} />;
       case 'jianguoyun':
         return <JianGuoYunSettings />;
       default:
