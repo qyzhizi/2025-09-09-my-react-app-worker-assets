@@ -11,7 +11,8 @@ import {durableHello,
   durableProcessGithubPush} from "@/callDurable"
 import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
 import { getUserById } from "@/infrastructure/user";
-import { updateUserSettingsToDb, getUserSettingsFromDb } from "@/infrastructure/userSettings";
+import { getUserSettingsFromDb } from "@/infrastructure/userSettings";
+import {updateCurrentVaultByUserId, getVaultsByUserId, updateOrCreateVaultByName, updateVault} from "@/infrastructure/vault"
 import { addOrUpdateGithubAppAccessData } from "@/infrastructure/githubAppAccess";
 import { safeUpdateGithubAppAccessByUserId,
   findGithubAppAccessByUserId,
@@ -318,40 +319,115 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
   }
 }
 
-export async function getCurrentSyncFileNamesHandler(
+export async function getSyncVaultsHandler(
   c: Context<{
     Bindings: Env;
     Variables: { userId: string, userName: string};
   }>
 ): Promise<Response> {
   try {
-    const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
-    return c.json({ current_sync_file: userSettings["current_sync_file"] ?? null, other_sync_file_names: userSettings["other_sync_file_names"] ? JSON.parse(userSettings["other_sync_file_names"]) : [] });
+    const allVaults = await getVaultsByUserId(c, c.get("userId"));
+    
+    // Find the current vault (status = "current")
+    const currentVault = allVaults.find(vault => vault.status === "current");
+    const currentSyncVault = currentVault?.vaultName ?? null;
+    
+    // Get other vaults (status = "active" or "archived")
+    const otherSyncVaults = allVaults
+      .filter(vault => vault.status !== "current")
+      .map(vault => ({
+        vaultName: vault.vaultName,
+        status: vault.status,
+      }));
+    
+    return c.json({ 
+      currentSyncVault, 
+      otherSyncVaults 
+    });
   } catch (error) {
-    console.error('Error in getCurrentSyncFileNames Handler:', error);
+    console.error('Error in getSyncVaultsHandler:', error);
     return c.json({ error: 'Internal Server Error' }, 500);
   }
 }
 
-// update user settings
-export async function updateSyncFileNamesHandler(
+
+export async function updateSyncVaultsHandler(
   c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>
 ): Promise<Response> {
   try {
     const body = await c.req.json()
-    const { current_sync_file, other_sync_file_names } = body
-    if (!current_sync_file || typeof current_sync_file !== 'string' || current_sync_file.trim() === '') {
+    const { currentSyncVault, OtherSyncVaults } = body
+    const userId = c.get("userId")
+    
+    if (!currentSyncVault || typeof currentSyncVault !== 'string' || currentSyncVault.trim() === '') {
       return c.json({ error: 'Empty current_sync_file' }, 400);
     }
-    // other_sync_file_names 可以为空，但如果传入则必须是数组
-    if (other_sync_file_names && !Array.isArray(other_sync_file_names)) {
-      return c.json({ error: 'Invalid other_sync_file_names, must be an array' }, 400);
+    // OtherSyncVaults 可以为空，但如果传入则必须是数组
+    if (OtherSyncVaults && !Array.isArray(OtherSyncVaults)) {
+      return c.json({ error: 'Invalid OtherSyncVaults, must be an array' }, 400);
     }
-    await updateUserSettingsToDb(c, c.get("userId"),
-    { "current_sync_file": current_sync_file, "other_sync_file_names": JSON.stringify(other_sync_file_names || []) });
-    return c.json({ message: 'Sync file names updated successfully' }, 200);
+
+    // 验证 OtherSyncVaults 数组中的每个元素
+    if (OtherSyncVaults) {
+      for (const vault of OtherSyncVaults) {
+        if (!vault || typeof vault !== 'object') {
+          return c.json({ error: 'Invalid vault object in OtherSyncVaults' }, 400);
+        }
+        if (!vault.vaultName || typeof vault.vaultName !== 'string' || vault.vaultName.trim() === '') {
+          return c.json({ error: 'Invalid vaultName in OtherSyncVaults' }, 400);
+        }
+        if (vault.status && !['active', 'archived','disable'].includes(vault.status)) {
+          return c.json({ error: 'Invalid status in OtherSyncVaults, must be "active", "disable" or "archived"' }, 400);
+        }
+      }
+    }
+
+    // 首先，将之前状态为 "current" 的 vault 改为 "active"
+    const allVaults = await getVaultsByUserId(c, userId);
+    const previousCurrentVault = allVaults.find(vault => vault.status === "current");
+    if (previousCurrentVault && previousCurrentVault.vaultName !== currentSyncVault) {
+      await updateCurrentVaultByUserId(c, userId, { status: "active" });
+    }
+
+    // 更新或创建当前 vault，确保状态为 "current"
+    await updateOrCreateVaultByName(
+      c,
+      userId,
+      currentSyncVault,
+      { status: "current" }
+    );
+
+    // 遍历 OtherSyncVaults 调用 updateOrCreateVaultByName
+    if (OtherSyncVaults && OtherSyncVaults.length > 0) {
+      for (const vault of OtherSyncVaults) {
+        await updateOrCreateVaultByName(
+          c,
+          userId,
+          vault.vaultName,
+          { status: vault.status || "active" }
+        );
+      }
+    }
+
+    // 对比数据库中的 vaults 与 OtherSyncVaults，将不在 OtherSyncVaults 中的 vault 设置为 archived
+    const allVaultsAfterUpdate = await getVaultsByUserId(c, userId);
+    const otherSyncVaultNames = OtherSyncVaults && OtherSyncVaults.length > 0 
+      ? OtherSyncVaults.map((v: { vaultName: string; status?: string }) => v.vaultName) 
+      : [];
+    
+    // 找出不在 OtherSyncVaults 中的 vaults（排除当前的 currentSyncVault）
+    const vaultsToArchive = allVaultsAfterUpdate.filter(
+      vault => vault.vaultName !== currentSyncVault && !otherSyncVaultNames.includes(vault.vaultName)
+    );
+    
+    // 将这些 vaults 的状态设置为 "archived"
+    for (const vault of vaultsToArchive) {
+      await updateVault(c, vault.id, { status: "archived" });
+    }
+
+    return c.json({ success: "ok", message: 'Sync file names updated successfully' }, 200);
   } catch (error) {
-    console.error('Error in updateSyncFileNamesHandler:', error);
+    console.error('Error in updateSyncVaultsHandler:', error);
     return c.json({ error: 'Internal Server Error' }, 500);
   }
 }

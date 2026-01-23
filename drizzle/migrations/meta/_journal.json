@@ -15,6 +15,27 @@
       "when": 1766903339390,
       "tag": "0001_peaceful_stone_men",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1769070262368,
+      "tag": "0002_flippant_professor_monster",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1769081864399,
+      "tag": "0003_glamorous_valeria_richards",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1769089688088,
+      "tag": "0004_marvelous_human_robot",
+      "breakpoints": true
     }
   ]
 }
