@@ -42,8 +42,7 @@ export const userAuths = sqliteTable("user_auths", {
 });
 
 
-export const userSettings = sqliteTable(
-  "user_settings",
+export const userSettings = sqliteTable("user_settings",
   {
     userId: text("user_id")
       .notNull()
@@ -56,13 +55,34 @@ export const userSettings = sqliteTable(
   ]
 );
 
+export const vault = sqliteTable("vault", {
+  id: text("id").primaryKey(),
+
+  userId: text("user_id")   // TS: userId, DB: user_id
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+
+  vaultName: text("vault_name", { length: 255 })
+    .notNull()
+    .default("memoflow"),
+
+  status: text("status", {
+    enum: ["current", "active", "disable", "archived"],
+  }).notNull().default("current"),
+
+  folderIndexInVault: integer("folder_index_in_vault")
+    .notNull()
+    .default(0),
+
+  fileIndexInFolder: integer("file_index_in_folder")
+    .notNull()
+    .default(0),
+})
 
 export const githubAppAccess = sqliteTable("github_access", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   githubRepoName: text("github_repo_name", { length: 255 }),
-  currentSyncFile: text("current_sync_file", { length: 512 }),
-  otherSyncFileList: text("other_sync_file_list"),
   accessToken: text("access_token", { length: 255 }),
   accessTokenExpiresAt: integer("access_token_expires_at", { mode: "timestamp" }),
   refreshToken: text("refresh_token", { length: 255 }),
@@ -75,5 +95,6 @@ export const tables = {
   users,
   userAuths,
   userSettings,
+  vault,
   githubAppAccess,
 };

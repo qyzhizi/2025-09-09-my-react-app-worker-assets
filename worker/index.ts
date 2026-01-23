@@ -17,8 +17,8 @@ import {
   initRefreshTokenHandler,
   logoutHandler,
   getUserInfoHandler,
-  getCurrentSyncFileNamesHandler,
-  updateSyncFileNamesHandler,
+  getSyncVaultsHandler,
+  updateSyncVaultsHandler,
   githubAppConfigureHandler,
   saveRepoAndTestConnectionHandler,
   getGitHubRepoNameHandler,
@@ -57,8 +57,8 @@ app.get("/user/avatar-url", getUserAvatarUrlHandler);
 app.get("/user/info", getUserInfoHandler);
 
 app.post('/diary-log/addlog', addLogHandler)
-app.get('/get-sync-file-names', getCurrentSyncFileNamesHandler);
-app.post('/update-sync-file-names', updateSyncFileNamesHandler);
+app.get('/get-sync-vaults', getSyncVaultsHandler);
+app.post('/update-sync-vaults', updateSyncVaultsHandler);
 app.post('/save-repo-and-test-connection', saveRepoAndTestConnectionHandler)
 app.get('/get-github-repo-name', getGitHubRepoNameHandler)
 // 独立导出 scheduled 方法
