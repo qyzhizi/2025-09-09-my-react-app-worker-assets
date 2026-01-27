@@ -17,14 +17,19 @@ import {
   initRefreshTokenHandler,
   logoutHandler,
   getUserInfoHandler,
-  getSyncVaultsHandler,
-  updateSyncVaultsHandler,
   githubAppConfigureHandler,
   saveRepoAndTestConnectionHandler,
-  getGitHubRepoNameHandler,
+  getGitHubRepoFullNameHandler,
+  getVaultInfoHandler,
+  githubAppSetupHandler,
+  getGitHubAppInstallationReposHandler,
+  setStoragePreferenceHandler,
+  getStoragePreferenceHandler
  } from '@/handler'
 
+
  import { GITHUB_LOGIN_PATH } from "./ConstVar";
+
 
 const app = new Hono().basePath(BASE_PATH)
 configAuthMiddleware(app); // 配置认证中间件
@@ -57,10 +62,13 @@ app.get("/user/avatar-url", getUserAvatarUrlHandler);
 app.get("/user/info", getUserInfoHandler);
 
 app.post('/diary-log/addlog', addLogHandler)
-app.get('/get-sync-vaults', getSyncVaultsHandler);
-app.post('/update-sync-vaults', updateSyncVaultsHandler);
+app.post('/storage/preference', setStoragePreferenceHandler)
+app.get('/storage/preference', getStoragePreferenceHandler)
 app.post('/save-repo-and-test-connection', saveRepoAndTestConnectionHandler)
-app.get('/get-github-repo-name', getGitHubRepoNameHandler)
+app.get('/get-github-repo-full-name', getGitHubRepoFullNameHandler)
+app.get('/vault/info', getVaultInfoHandler)
+app.get('/github-app-setup', githubAppSetupHandler)
+app.get('/get-githubapp-installation-repositories', getGitHubAppInstallationReposHandler)
 // 独立导出 scheduled 方法
 export default {
   fetch: app.fetch,  // 将 app.fetch 作为 fetch 函数导出

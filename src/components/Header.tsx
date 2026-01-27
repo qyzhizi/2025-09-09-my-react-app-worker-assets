@@ -89,11 +89,10 @@ export const Header = ({
         
         {/* 导航内容 */}
         <nav className="flex flex-col space-y-2 text-lg">
-          <a className="px-6 py-3 hover:bg-gray-200 dark:hover:bg-gray-700 block" href="/">
-            Hello
-          </a>
-          <a className="px-6 py-3 hover:bg-gray-200 dark:hover:bg-gray-700 block" href="/loginput">
-            loginput
+          <a className="px-6 py-3 flex items-center hover:bg-gray-200 dark:hover:bg-gray-700" href="/" aria-current="page">
+            <svg className="h-5 w-5 mr-2 fill-current text-gray-900 dark:text-white" xmlns="http://www.w3.org/2000/svg" height="20" width="22.5" viewBox="0 0 576 512">
+              <path d="M575.8 255.5c0 18-15 32.1-32 32.1h-32l.7 160.2c0 2.7-.2 5.4-.5 8.1V472c0 22.1-17.9 40-40 40H456c-1.1 0-2.2 0-3.3-.1c-1.4 .1-2.8 .1-4.2 .1H416 392c-22.1 0-40-17.9-40-40V448 384c0-17.7-14.3-32-32-32H256c-17.7 0-32 14.3-32 32v64 24c0 22.1-17.9 40-40 40H160 128.1c-1.5 0-3-.1-4.5-.2c-1.2 .1-2.4 .2-3.6 .2H104c-22.1 0-40-17.9-40-40V360c0-.9 0-1.9 .1-2.8V287.6H32c-18 0-32-14-32-32.1c0-9 3-17 10-24L266.4 8c7-7 15-8 22-8s15 2 21 7L564.8 231.5c8 7 12 15 11 24z"></path>
+            </svg> Home
           </a>
           <a className="px-6 py-3 hover:bg-gray-200 dark:hover:bg-gray-700 block" href="/local-store">
             local-store
@@ -103,6 +102,7 @@ export const Header = ({
           </a>
           <a
             href="http://rin.qyzhizi.cn/"
+            target="_blank"
             className="flex gap-2 items-center px-6 py-3 hover:bg-gray-200 dark:hover:bg-gray-700"
           >
             <span>lzp blog</span>

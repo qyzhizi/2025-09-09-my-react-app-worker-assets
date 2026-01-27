@@ -5,6 +5,7 @@ import { Login } from './components/Login'
 import { InitRefreshToken } from './components/InitRefreshToken'
 import MainSettingPage from './components/settings/MainSettingPage'
 import LocalStoreApp from './LocalStoreApp'
+import GithubAppSetupSuccess from './components/GithubAppSetupSuccess'
 
 import {AppLayout} from './layouts/AppLayout'
 import {EmptyLayout} from './layouts/EmptyLayout'
@@ -54,7 +55,13 @@ export const routes: RouteConfig[] = [
     path:'/login-callback-init-refresh-token',
     element: <InitRefreshToken />,
     layout: EmptyLayout,
+  },
+  {
+    path: '/github-app-setup-success',
+    element: <GithubAppSetupSuccess />,
+    layout: EmptyLayout,
   }
+
 ]
 
 

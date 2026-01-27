@@ -36,6 +36,13 @@
       "when": 1769089688088,
       "tag": "0004_marvelous_human_robot",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1769182132333,
+      "tag": "0005_opposite_hex",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,7 @@ import { setCookie } from "hono/cookie";
 import { sign } from "hono/jwt";
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
+import { getInstallationRepositories } from '@/githubApp'
 
 import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService'
 import {durableHello,
@@ -11,16 +12,16 @@ import {durableHello,
   durableProcessGithubPush} from "@/callDurable"
 import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
 import { getUserById } from "@/infrastructure/user";
-import { getUserSettingsFromDb } from "@/infrastructure/userSettings";
-import {updateCurrentVaultByUserId, getVaultsByUserId, updateOrCreateVaultByName, updateVault} from "@/infrastructure/vault"
+import { getUserSettingsFromDb, updateUserSettingsToDb } from "@/infrastructure/userSettings";
 import { addOrUpdateGithubAppAccessData } from "@/infrastructure/githubAppAccess";
+import {createVault} from '@/infrastructure/vault'
 import { safeUpdateGithubAppAccessByUserId,
   findGithubAppAccessByUserId,
   getGithubAppAccessInfo, 
 } from "@/infrastructure/githubAppAccess"
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { Provider } from "@/types/provider";
-import { validateGitRepoName } from "@/common"
+import { validateGitRepoFullName } from "@/common"
 import { ValidationError, NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdateGitHubAppAccessInfo} from "@/providers"
 import {testGitHubRepoAcess} from "@/providers"
@@ -319,134 +320,26 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
   }
 }
 
-export async function getSyncVaultsHandler(
-  c: Context<{
-    Bindings: Env;
-    Variables: { userId: string, userName: string};
-  }>
-): Promise<Response> {
-  try {
-    const allVaults = await getVaultsByUserId(c, c.get("userId"));
-    
-    // Find the current vault (status = "current")
-    const currentVault = allVaults.find(vault => vault.status === "current");
-    const currentSyncVault = currentVault?.vaultName ?? null;
-    
-    // Get other vaults (status = "active" or "archived")
-    const otherSyncVaults = allVaults
-      .filter(vault => vault.status !== "current")
-      .map(vault => ({
-        vaultName: vault.vaultName,
-        status: vault.status,
-      }));
-    
-    return c.json({ 
-      currentSyncVault, 
-      otherSyncVaults 
-    });
-  } catch (error) {
-    console.error('Error in getSyncVaultsHandler:', error);
-    return c.json({ error: 'Internal Server Error' }, 500);
-  }
-}
-
-
-export async function updateSyncVaultsHandler(
-  c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>
-): Promise<Response> {
-  try {
-    const body = await c.req.json()
-    const { currentSyncVault, OtherSyncVaults } = body
-    const userId = c.get("userId")
-    
-    if (!currentSyncVault || typeof currentSyncVault !== 'string' || currentSyncVault.trim() === '') {
-      return c.json({ error: 'Empty current_sync_file' }, 400);
-    }
-    // OtherSyncVaults 可以为空，但如果传入则必须是数组
-    if (OtherSyncVaults && !Array.isArray(OtherSyncVaults)) {
-      return c.json({ error: 'Invalid OtherSyncVaults, must be an array' }, 400);
-    }
-
-    // 验证 OtherSyncVaults 数组中的每个元素
-    if (OtherSyncVaults) {
-      for (const vault of OtherSyncVaults) {
-        if (!vault || typeof vault !== 'object') {
-          return c.json({ error: 'Invalid vault object in OtherSyncVaults' }, 400);
-        }
-        if (!vault.vaultName || typeof vault.vaultName !== 'string' || vault.vaultName.trim() === '') {
-          return c.json({ error: 'Invalid vaultName in OtherSyncVaults' }, 400);
-        }
-        if (vault.status && !['active', 'archived','disable'].includes(vault.status)) {
-          return c.json({ error: 'Invalid status in OtherSyncVaults, must be "active", "disable" or "archived"' }, 400);
-        }
-      }
-    }
-
-    // 首先，将之前状态为 "current" 的 vault 改为 "active"
-    const allVaults = await getVaultsByUserId(c, userId);
-    const previousCurrentVault = allVaults.find(vault => vault.status === "current");
-    if (previousCurrentVault && previousCurrentVault.vaultName !== currentSyncVault) {
-      await updateCurrentVaultByUserId(c, userId, { status: "active" });
-    }
-
-    // 更新或创建当前 vault，确保状态为 "current"
-    await updateOrCreateVaultByName(
-      c,
-      userId,
-      currentSyncVault,
-      { status: "current" }
-    );
-
-    // 遍历 OtherSyncVaults 调用 updateOrCreateVaultByName
-    if (OtherSyncVaults && OtherSyncVaults.length > 0) {
-      for (const vault of OtherSyncVaults) {
-        await updateOrCreateVaultByName(
-          c,
-          userId,
-          vault.vaultName,
-          { status: vault.status || "active" }
-        );
-      }
-    }
-
-    // 对比数据库中的 vaults 与 OtherSyncVaults，将不在 OtherSyncVaults 中的 vault 设置为 archived
-    const allVaultsAfterUpdate = await getVaultsByUserId(c, userId);
-    const otherSyncVaultNames = OtherSyncVaults && OtherSyncVaults.length > 0 
-      ? OtherSyncVaults.map((v: { vaultName: string; status?: string }) => v.vaultName) 
-      : [];
-    
-    // 找出不在 OtherSyncVaults 中的 vaults（排除当前的 currentSyncVault）
-    const vaultsToArchive = allVaultsAfterUpdate.filter(
-      vault => vault.vaultName !== currentSyncVault && !otherSyncVaultNames.includes(vault.vaultName)
-    );
-    
-    // 将这些 vaults 的状态设置为 "archived"
-    for (const vault of vaultsToArchive) {
-      await updateVault(c, vault.id, { status: "archived" });
-    }
-
-    return c.json({ success: "ok", message: 'Sync file names updated successfully' }, 200);
-  } catch (error) {
-    console.error('Error in updateSyncVaultsHandler:', error);
-    return c.json({ error: 'Internal Server Error' }, 500);
-  }
+export async function getVaultInfoHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  const vaultInfo = await createVault(c, {userId: c.get('userId')})
+  return c.json({"vaultName": vaultInfo.vaultName})
 }
 
 export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   try {
     const body = await c.req.json()
-    const { githubRepoName } = body
-    console.log("githubRepoName:", githubRepoName)
+    const { githubRepoFullName } = body
     
     // 验证 repoName
     try {
-      validateGitRepoName(githubRepoName);
+      validateGitRepoFullName(githubRepoFullName);
     } catch (error) {
       if (error instanceof ValidationError) {
         return c.json({ error: error.message }, 400);
       }
       throw error; // 重新抛出非 ValidationError 的错误
     }
+    const [githubUserName, githubRepoName] = githubRepoFullName.split("/");
 
     // get settings @todo validate user settings
     const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
@@ -457,11 +350,14 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
       throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!")
     }
     const accessToken = githubAccessInfo.accessToken
-    const githubUserName = githubAccessInfo.githubUserName
-    if (!githubUserName) {
-      throw new NotGetAccessTokenError("Fail to get GitHub username, Please login GitHub first!")
+    const dbGithubUserName = githubAccessInfo.githubUserName
+    if (!dbGithubUserName ) {
+      throw new NotGetAccessTokenError("Fail to get GitHub username, Please login GitHub first, then try again!")
     }
-    // console.log("accessToken: ", accessToken)
+    if (githubUserName !== dbGithubUserName ) {
+      console.log({githubUserName, dbGithubUserName})
+      throw new NotGetAccessTokenError(" Input is inconsistent with DB  , Please login GitHub first, then try again!")
+    }
 
     try{
       await safeUpdateGithubAppAccessByUserId(c, { githubRepoName });
@@ -471,15 +367,84 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
       return c.json({"success": "false", "error": errorMessage}, 400)
     }
     
-    return c.json({"success": `${githubRepoName} saved, connecting success!`})
+    return c.json({"success": `${githubUserName}/${githubRepoName} saved, connecting success!`})
 
   } catch (error) {
+    console.log("error: ", error)
     return c.json({error: 'Internal Server Error'}, 500);
   }
 }
 
-export async function getGitHubRepoNameHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+export async function getGitHubRepoFullNameHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   const githubAccessInfo = await getGithubAppAccessInfo(c);
   const githubRepoName = githubAccessInfo?.githubRepoName ?? null
-  return c.json({githubRepoName})
+  const githubUserName = githubAccessInfo?.githubUserName ?? null
+  return c.json({githubUserName, githubRepoName})
+}
+
+export async function githubAppSetupHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  try {
+    const installationId = c.req.query('installation_id')
+    const setupAction = c.req.query('setup_action')
+    if (!installationId) {
+      return c.json({ error: 'lack installation_id param' }, 400)
+    }
+    // save to userSettings
+    await updateUserSettingsToDb(c, c.get("userId"), 
+      { installationId, setupAction })
+    return c.redirect('/github-app-setup-success')
+  } catch (err) {
+    console.error('githubAppSetupHandler error:', err)
+    return c.json({ error: 'Internal Server Error' }, 500)
+  }
+}
+
+export async function getGitHubAppInstallationReposHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+
+  const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
+  const installationId = userSettings['installationId']
+  if (!installationId) {
+    return c.json({ error: 'Installation ID not found, Please re-configure the GitHub App' }, 404)
+  }
+  const githubAppId = c.env.GITHUB_APP_ID
+  const rawPrivateKeyPem= c.env.GITHUB_APP_PRIVATE_PEM
+  // 将字符串转换为换行符
+  const privateKeyPem = rawPrivateKeyPem.replace(/\\n/g, '\n')
+  console.log("githubAppPrivateKey: ", privateKeyPem)
+  const installationData = await getInstallationRepositories(
+    installationId, githubAppId, privateKeyPem)
+  console.log(installationData)
+  return c.json({installationData})
+}
+
+export async function setStoragePreferenceHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  try {
+    const body = await c.req.json()
+    const { storageType } = body
+
+    // Validate storageType
+    if (!storageType) {
+      return c.json({ error: 'Storage type is required' }, 400)
+    }
+
+    // save to userSettings
+    await updateUserSettingsToDb(c, c.get("userId"),
+      { storageType })
+
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('setStoragePreferenceHandler error:', error)
+    return c.json({ error: 'Internal Server Error' }, 500)
+  }
+}
+
+export async function getStoragePreferenceHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  try {
+    const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
+    const storageType = userSettings['storageType']
+    return c.json({ storageType })
+  } catch (error) {
+    console.error('getStoragePreferenceHandler error:', error)
+    return c.json({ error: 'Internal Server Error' }, 500)
+  }
 }

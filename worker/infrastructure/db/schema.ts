@@ -66,10 +66,6 @@ export const vault = sqliteTable("vault", {
     .notNull()
     .default("memoflow"),
 
-  status: text("status", {
-    enum: ["current", "active", "disable", "archived"],
-  }).notNull().default("current"),
-
   folderIndexInVault: integer("folder_index_in_vault")
     .notNull()
     .default(0),
