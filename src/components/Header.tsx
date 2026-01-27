@@ -59,7 +59,7 @@ export const Header = ({
       <div 
         ref={headerRef}
         className={`
-          fixed md:relative
+          absolute md:relative
           top-0 left-0
           p-3
           h-full md:h-screen

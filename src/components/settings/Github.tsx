@@ -156,7 +156,7 @@ function VaultInfoCard() {
   };
 
   return (
-    <div className="min-h-screen bg-transparent transition-colors duration-300">
+    <div className="bg-transparent transition-colors duration-300">
       <div className="max-w-2xl mx-auto bg-transparent rounded-lg p-2 transition-colors duration-300">
         {/* GitHub Icon */}
         <div className="flex justify-center mb-2">

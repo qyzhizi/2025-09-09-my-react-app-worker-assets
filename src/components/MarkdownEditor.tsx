@@ -73,7 +73,7 @@ const MarkdownEditor: React.FC<EditorProps> = ({
     }
   }, [value]);
 
-  return <div id={containerId} className="w-full h-full" />;
+  return <div id={containerId} className="w-full" />;
 };
 
 export default MarkdownEditor;

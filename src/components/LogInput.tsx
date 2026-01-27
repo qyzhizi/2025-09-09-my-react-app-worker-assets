@@ -37,7 +37,7 @@ const LogInput = () => {
 
   return (
     <div
-      className="mb-2 relative w-full flex flex-col justify-start items-start bg-white dark:bg-zinc-800 px-1 pt-2 rounded-lg border border-gray-200 dark:border-zinc-700 "
+      className="h-fit max-w-4xl mb-2 relative w-full flex flex-col justify-start items-start bg-white dark:bg-zinc-800 px-1 pt-2 rounded-lg border border-gray-200 dark:border-zinc-700 "
       tabIndex={0}
     >
       {/* 用 MarkdownEditor 替代 TextAreaBox */}

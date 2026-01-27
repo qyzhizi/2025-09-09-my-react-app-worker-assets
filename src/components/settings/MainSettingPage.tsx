@@ -90,7 +90,7 @@ export default function MainSettingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+    <div className="w-full h-full bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
       <div className={styles.settingsContainer}>
 
         {/* 顶部导航（小屏） */}
@@ -118,10 +118,10 @@ export default function MainSettingPage() {
           </nav>
         </div>
 
-        <div className="flex ">
+        <div className="flex h-full">
           {/* 左侧导航（大屏） */}
           <div className={styles.navSide}>
-            <nav className="w-64 bg-gray-100 dark:bg-gray-800 dark:text-white min-h-screen">
+            <nav className="w-64 bg-gray-100 dark:bg-gray-800 dark:text-white h-full">
               <div className="p-6">
                 <h1 className="text-xl font-bold mb-6">设置</h1>
                 <div className="space-y-2">
@@ -148,7 +148,7 @@ export default function MainSettingPage() {
           </div>
 
           {/* 内容区域 */}
-          <main className="mt-5 flex-1 bg-gray-100 dark:bg-gray-800 content-area">
+          <main className="py-5 flex-1 bg-gray-100 dark:bg-gray-800 content-area">
             {renderContent()}
           </main>
         </div>

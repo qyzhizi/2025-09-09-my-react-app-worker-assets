@@ -15,22 +15,25 @@ export const App = ({ children }: { children: any }) => {
 
   return (
     <div className="flex h-screen w-full ">
-      <Header 
-        isOpen={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-        onScrollRight={handleScrollRight}
-      />
-      
-      <div className="flex-1 flex flex-col w-full md:w-auto ">
-        <MobileTopBar onMenuClick={() => setIsSidebarOpen(true)} />
+      {/* <div className="max-w-container min-w-container relative mx-auto flex"> */}
+        <Header 
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+          onScrollRight={handleScrollRight}
+        />
+        {/* content */}
+        <div className="flex-1 flex flex-col w-full md:w-auto ">
+          <MobileTopBar onMenuClick={() => setIsSidebarOpen(true)} />
         
-        <div 
-          ref={contentRef}
-          className="flex-1 p-6 bg-gray-100 dark:bg-gray-900 text-black dark:text-white overflow-y-auto overflow-x-hidden"
-        >
-          {children}
+          <div 
+            ref={contentRef}
+            className="flex flex-1 px-2 py-5 justify-center bg-gray-100 dark:bg-gray-900 text-black dark:text-white overflow-x-hidden"
+          >
+            {children}
+          </div>
         </div>
+
       </div>
-    </div>
+    // </div>
   );
 };
