@@ -221,7 +221,8 @@ export default function StorageSettings({
 
       {/* Render corresponding settings component based on selection */}
       <div className="mt-2">
-        {selectedStorage === 'github' && <GithubSettings />}
+        {selectedStorage === 'github' && <GithubSettings 
+          setSuccessMessage={setSuccessMessage}/>}
         {selectedStorage === 'jianguoyun' && <JianGuoYunSettings />}
       </div>
     </div>

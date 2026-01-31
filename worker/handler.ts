@@ -13,17 +13,17 @@ import {durableHello,
 import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
 import { getUserById } from "@/infrastructure/user";
 import { getUserSettingsFromDb, updateUserSettingsToDb } from "@/infrastructure/userSettings";
-import { addOrUpdateGithubAppAccessData } from "@/infrastructure/githubAppAccess";
-import {createVault} from '@/infrastructure/vault'
-import { safeUpdateGithubAppAccessByUserId,
-  findGithubAppAccessByUserId,
-  getGithubAppAccessInfo, 
-} from "@/infrastructure/githubAppAccess"
+import { addOrUpdategithubRepoAccessData } from "@/infrastructure/githubRepoAccess";
+import {getVaultInfo} from '@/infrastructure/githubRepoAccess'
+import { safeUpdategithubRepoAccessByUserId,
+  findgithubRepoAccessByUserId,
+  getgithubRepoAccessInfo, 
+} from "@/infrastructure/githubRepoAccess"
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { Provider } from "@/types/provider";
 import { validateGitRepoFullName } from "@/common"
 import { ValidationError, NotGetAccessTokenError } from "@/types/error"
-import {getOrUpdateGitHubAppAccessInfo} from "@/providers"
+import {getOrUpdategithubRepoAccessInfo} from "@/providers"
 import {testGitHubRepoAcess} from "@/providers"
 
 const VALIDATION_TARGET = {
@@ -180,7 +180,7 @@ export async function githubAppAuthCallbackHandler(c: Context<{ Bindings: Env }>
     };
     // 尝试更新数据库中 GitHub App 相关数据
     try {
-      await addOrUpdateGithubAppAccessData(c, filteredTokenData)
+      await addOrUpdategithubRepoAccessData(c, filteredTokenData)
     } catch (dbError) {
       console.error('更新 GitHub App 访问数据时出错:', dbError)
       // 重定向到设置页面，但带上错误参数
@@ -218,7 +218,7 @@ export async function setGithubRepoHandler(c: Context<{ Bindings: Env }>): Promi
     }
 
     // 执行安全更新
-    await safeUpdateGithubAppAccessByUserId(c, { githubRepoName });
+    await safeUpdategithubRepoAccessByUserId(c, { githubRepoName });
 
     return c.json({ message: 'GitHub repo name updated successfully' }, 200);
   } catch (err: any) {
@@ -270,13 +270,12 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
     const now = new Date().toISOString()
 
     const logEntry = {
-      message: "update",
-      filePath: "test1.md",
+      message: "update by Memoflow",
       content,
       created_at: now,
       taskId: taskId,
     }
-    var existingRecord = await findGithubAppAccessByUserId(c);
+    var existingRecord = await findgithubRepoAccessByUserId(c);
 
     // console.log("existingRecord:", existingRecord)
     // 先检查 existingRecord 是否存在
@@ -290,23 +289,28 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       // console.log("existingRecord:", existingRecord)
       return c.json({ error: "Incomplete GitHub access record" }, 400);
     }
+    // get vaultName
+    const vaultPathInRepo = existingRecord.vaultPathInRepo;
+    const vaultName = existingRecord.vaultName;
+    if (!vaultPathInRepo || vaultPathInRepo.trim() === '') {
+      return c.json({ error: 'Empty vaultPathInRepo in existingRecord' }, 400);
+    }
+
     const taskParams: Partial<PushGitRepoTaskParams> = {
       id: logEntry.taskId,
       commitMessage: logEntry.message,
       accessToken: existingRecord.accessToken,
       githubUserName: existingRecord.githubUserName,
       repoName: existingRecord.githubRepoName,
-      branch: "main",
+      vaultPathInRepo: vaultPathInRepo,
+      vaultName: vaultName,
       content: logEntry.content,
       completed: false,
-      filePath: logEntry.filePath,
       createdAt: logEntry.created_at,
     }
-    // const createdTask = await durableCreateTask(c, taskParams)
     await durableCreateGithubPushParamsTask(c, taskParams)
     // console.log("createdTask:", createdTask)
     
-    // 调用 fetchMemoflowTask 函数
     try {
       const result = await durableProcessGithubPush(c, taskId);
       return c.json(result);
@@ -321,16 +325,25 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
 }
 
 export async function getVaultInfoHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
-  const vaultInfo = await createVault(c, {userId: c.get('userId')})
-  return c.json({"vaultName": vaultInfo.vaultName})
+  const {vaultName, folderIndexInVault, fileIndexInFolder} = await getVaultInfo(c)
+  return c.json({vaultName, folderIndexInVault, fileIndexInFolder})
 }
 
 export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   try {
     const body = await c.req.json()
-    const { githubRepoFullName } = body
+    const { githubRepoFullName, vaultPathInRepo } = body
+
+    // verify vaultPathInRep
+    if (!vaultPathInRepo || vaultPathInRepo.trim() === '') {
+      return c.json({ error: 'Empty vaultPathInRepo' }, 400);
+    }
+    // verify vaultPathInRepo format
+    if (!/^([\w\-./]+)$/.test(vaultPathInRepo)) {
+      return c.json({ error: 'Invalid vaultPathInRepo format. Only alphanumeric characters, hyphens, underscores, dots, and slashes are allowed.' }, 400);
+    }
     
-    // 验证 repoName
+    // verify repoName
     try {
       validateGitRepoFullName(githubRepoFullName);
     } catch (error) {
@@ -345,7 +358,7 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
     console.log("userSettings: ", userSettings)
 
-    const githubAccessInfo = await getOrUpdateGitHubAppAccessInfo(c)
+    const githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c)
     if (!githubAccessInfo || !githubAccessInfo.accessToken){
       throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!")
     }
@@ -360,7 +373,7 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     }
 
     try{
-      await safeUpdateGithubAppAccessByUserId(c, { githubRepoName });
+      await safeUpdategithubRepoAccessByUserId(c, { githubRepoName, vaultPathInRepo });
       await testGitHubRepoAcess(accessToken, githubUserName, githubRepoName);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -375,11 +388,14 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
   }
 }
 
-export async function getGitHubRepoFullNameHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
-  const githubAccessInfo = await getGithubAppAccessInfo(c);
+export async function getGitHubRepoInfoHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  const githubAccessInfo = await getgithubRepoAccessInfo(c);
   const githubRepoName = githubAccessInfo?.githubRepoName ?? null
   const githubUserName = githubAccessInfo?.githubUserName ?? null
-  return c.json({githubUserName, githubRepoName})
+  const vaultPathInRepo = githubAccessInfo?.vaultPathInRepo ?? null
+  const vaultName = githubAccessInfo?.vaultName ?? null
+  const vaultInfo = { vaultName, folderIndexInVault: null, fileIndexInFolder: null }
+  return c.json({githubUserName, githubRepoName, vaultPathInRepo, vaultInfo})
 }
 
 export async function githubAppSetupHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {

@@ -1,0 +1,1 @@
+ALTER TABLE `github_access` ADD `vault_path_in_repo` text(255);

@@ -43,6 +43,27 @@
       "when": 1769182132333,
       "tag": "0005_opposite_hex",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1769598346087,
+      "tag": "0006_nappy_revanche",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1769676850395,
+      "tag": "0007_woozy_layla_miller",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1769679156373,
+      "tag": "0008_secret_starhawk",
+      "breakpoints": true
     }
   ]
 }

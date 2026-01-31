@@ -14,10 +14,11 @@ export interface PushGitRepoTaskParams {
     accessToken: string;
     githubUserName: string;
     repoName: string;
+    vaultPathInRepo: string;
+    vaultName: string;
     branch?: string;
     content: string;
     completed: boolean;
-    filePath: string;
     createdAt?: string;
 }
 

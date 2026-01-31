@@ -2,52 +2,8 @@ import { useState, useEffect } from 'react';
 import {apiFetch} from "@/common";
 
 
-function VaultInfoCard() {
-  const [vaultInfo, setVaultInfo] = useState<{ vaultName?: string } | null>(null);
-  const [loadingVault, setLoadingVault] = useState(true);
-  const [vaultError, setVaultError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchVaultInfo = async () => {
-      try {
-        setLoadingVault(true);
-        const response = await apiFetch('/api/vault/info');
-        if (!response.ok) {
-          throw new Error('Failed to fetch vault info');
-        }
-        const data = await response.json();
-        setVaultInfo(data);
-        setVaultError(null);
-      } catch (error) {
-        console.error('Error fetching vault info:', error);
-        setVaultError('Failed to load vault information');
-      } finally {
-        setLoadingVault(false);
-      }
-    };
-
-    fetchVaultInfo();
-  }, []);
-
-  if (loadingVault) {
-    return (
-      <div className="mb-2 p-2 bg-gray-50 dark:bg-gray-700 rounded-md">
-        <div className="flex items-center justify-center py-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-          <span className="ml-3 text-gray-600 dark:text-gray-300 text-sm">Loading vault info...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (vaultError) {
-    return (
-      <div className="mb-2 p-2 bg-gray-50 dark:bg-gray-700 rounded-md">
-        <p className="text-red-500 text-sm">{vaultError}</p>
-      </div>
-    );
-  }
-
+function VaultInfoCard({ vaultInfo }: 
+  { vaultInfo: { vaultName?: string } }) {
   if (!vaultInfo) {
     return null;
   }
@@ -64,8 +20,16 @@ function VaultInfoCard() {
   );
 }
 
-  export default function GithubSettings() {
+interface GithubSettingsProps {
+  setSuccessMessage: (message: string | null) => void;
+}
+
+export default function GithubSettings({
+  setSuccessMessage,
+  }: GithubSettingsProps) {
   const [githubRepoFullName, setGitHubRepoFullName] = useState('');
+  const [vaultInfo, setVaultInfo] = useState<{ vaultName?: string }>({});
+  const [vaultPathInRepo, setVaultPathInRepo] = useState('');
   // true = 正在加载，false = 加载完成
   const [loading, setLoading] = useState(true);
   const [repositories, setRepositories] = useState<Array<{id: number; name: string; full_name: string; html_url: string; description: string}>>([]);
@@ -94,12 +58,15 @@ function VaultInfoCard() {
     const fetchGitHubRepoName = async () => {
       try {
         setLoading(true);
-        const response = await fetch('/api/get-github-repo-full-name');
+        const response = await fetch('/api/get-github-repo-info');
         if (!response.ok) {
           throw new Error('Failed to fetch githubRepoFullName');
         }
         const data = await response.json();
         setGitHubRepoFullName(`${data.githubUserName}/${data.githubRepoName}` || '');
+        setVaultPathInRepo(data.vaultPathInRepo || '');
+        setVaultInfo(data.vaultInfo || '');
+        console.log('Fetched vaultInfo:', data.vaultInfo);
       } catch (error) {
         console.error('Error fetching githubRepoFullName:', error);
       } finally {
@@ -114,7 +81,12 @@ function VaultInfoCard() {
       alert('Please enter a Git repository path');
       return;
     }
+    if (!vaultPathInRepo.trim()) {
+      alert('Please enter a vault path in repository');
+      return;
+    }
     // console.log('Saving repo path:', githubRepoFullName);
+    // console.log('Saving vault path:', vaultPathInRepo);
     try {
       const res = await apiFetch("/api/save-repo-and-test-connection", {
         method: "POST",
@@ -123,6 +95,7 @@ function VaultInfoCard() {
         },
         body: JSON.stringify({
           githubRepoFullName,
+          vaultPathInRepo,
         }),
       });
       
@@ -169,7 +142,7 @@ function VaultInfoCard() {
           <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
             Vault Info
           </div>
-          <VaultInfoCard />
+          <VaultInfoCard vaultInfo={vaultInfo} />
         </div>
         <hr className="border-t border-gray-500 dark:border-gray-500 my-4" />
 
@@ -210,49 +183,72 @@ function VaultInfoCard() {
         <div className="text-gray-900 dark:text-white text-sm font-medium mt-3 mb-3">
           (3) GitHub Repo Name
         </div>
-        {/* <input
-          type="text"
-          placeholder="e.g.: RepoName"
-          value={githubRepoFullName}
-          readOnly
-          disabled={loading}
-          className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 placeholder-gray-500 dark:placeholder-gray-400"
-        /> */}
 
-        {/* Repo Select Dropdown */}
-        <select
-          className="mt-3 w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200"
-          value={githubRepoFullName}
-          onChange={e => {setGitHubRepoFullName(e.target.value);console.log('Selected repo:', e.target.value);}}
-          onMouseDown={e => {
-            // 只在点击 select 主体时触发，不会因点击 option 触发
-            if (!loadingRepos && e.button === 0) {
-              setRepositories([])
-              handleFetchInstallationRepos();
-            }
-          }}
-          disabled={loading}
-        >
-          {repositories.length === 0 ? (
-            <option value={githubRepoFullName || 'no repos'}>{githubRepoFullName || 'no repos'}</option>
-          ) : (
-            <>
-              {/* <option value="">请选择一个 GitHub 仓库</option> */}
-              {repositories.map(repo => (
+        <div className="mt-3 flex items-center gap-2">
+          {/* Repo Select Dropdown */}
+          <select
+            className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200"
+            value={githubRepoFullName}
+            onChange={e => {
+              setGitHubRepoFullName(e.target.value);
+              console.log("Selected repo:", e.target.value);
+            }}
+            onMouseDown={e => {
+              // 只在点击 select 主体时触发
+              if (!loadingRepos && e.button === 0) {
+                setRepositories([]);
+                handleFetchInstallationRepos();
+              }
+            }}
+            disabled={loading}
+          >
+            {repositories.length === 0 ? (
+              <option value={githubRepoFullName || ""}>
+                {githubRepoFullName || "no repos"}
+              </option>
+            ) : (
+              repositories.map(repo => (
                 <option key={repo.id} value={repo.full_name}>
                   {repo.full_name}
                 </option>
-              ))}
-            </>
-          )}
-        </select>
+              ))
+            )}
+          </select>
+
+          <button
+            type="button"
+            className="px-3 py-2 text-sm rounded-md bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
+            disabled={!githubRepoFullName}
+            onClick={() => {
+              navigator.clipboard.writeText(githubRepoFullName);
+              // 提示已复制
+              setSuccessMessage('Copied to clipboard: ' + githubRepoFullName)
+              setTimeout(() => { setSuccessMessage(null); }, 3000);
+            }}
+          >
+            Copy
+          </button>
+        </div>
+
         {loadingRepos && (
           <div className="flex items-center justify-center py-2">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
             <span className="ml-3 text-gray-600 dark:text-gray-300 text-sm">Loading repositories...</span>
           </div>
         )}
-        {/* <hr className="border-t border-gray-200 dark:border-gray-500 my-6" /> */}
+
+        {/* Vault Path Input */}
+        <div className="text-gray-900 dark:text-white text-sm font-medium mt-4 mb-3">
+          (4) Vault Path in Repository
+        </div>
+        <input
+          type="text"
+          placeholder="e.g.: / or /vault or /my-notes"
+          value={vaultPathInRepo}
+          onChange={e => setVaultPathInRepo(e.target.value)}
+          disabled={loading}
+          className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 placeholder-gray-500 dark:placeholder-gray-400"
+        />
 
         {/* Save Button */}
         <button

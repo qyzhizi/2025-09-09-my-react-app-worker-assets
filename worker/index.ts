@@ -19,7 +19,7 @@ import {
   getUserInfoHandler,
   githubAppConfigureHandler,
   saveRepoAndTestConnectionHandler,
-  getGitHubRepoFullNameHandler,
+  getGitHubRepoInfoHandler,
   getVaultInfoHandler,
   githubAppSetupHandler,
   getGitHubAppInstallationReposHandler,
@@ -65,7 +65,7 @@ app.post('/diary-log/addlog', addLogHandler)
 app.post('/storage/preference', setStoragePreferenceHandler)
 app.get('/storage/preference', getStoragePreferenceHandler)
 app.post('/save-repo-and-test-connection', saveRepoAndTestConnectionHandler)
-app.get('/get-github-repo-full-name', getGitHubRepoFullNameHandler)
+app.get('/get-github-repo-info', getGitHubRepoInfoHandler)
 app.get('/vault/info', getVaultInfoHandler)
 app.get('/github-app-setup', githubAppSetupHandler)
 app.get('/get-githubapp-installation-repositories', getGitHubAppInstallationReposHandler)

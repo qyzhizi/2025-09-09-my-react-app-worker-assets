@@ -55,35 +55,25 @@ export const userSettings = sqliteTable("user_settings",
   ]
 );
 
-export const vault = sqliteTable("vault", {
-  id: text("id").primaryKey(),
-
-  userId: text("user_id")   // TS: userId, DB: user_id
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-
-  vaultName: text("vault_name", { length: 255 })
-    .notNull()
-    .default("memoflow"),
-
-  folderIndexInVault: integer("folder_index_in_vault")
-    .notNull()
-    .default(0),
-
-  fileIndexInFolder: integer("file_index_in_folder")
-    .notNull()
-    .default(0),
-})
-
-export const githubAppAccess = sqliteTable("github_access", {
+export const githubRepoAccess = sqliteTable("github_access", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   githubRepoName: text("github_repo_name", { length: 255 }),
+  vaultPathInRepo: text("vault_path_in_repo", { length: 255 }),
   accessToken: text("access_token", { length: 255 }),
   accessTokenExpiresAt: integer("access_token_expires_at", { mode: "timestamp" }),
   refreshToken: text("refresh_token", { length: 255 }),
   refreshTokenExpiresAt: integer("refresh_token_expires_at", { mode: "timestamp" }),
   githubUserName: text("github_user_name", { length: 255 }),
+  vaultName: text("vault_name", { length: 255 })
+    .notNull()
+    .default("memoflowVault"),
+  folderIndexInVault: integer("folder_index_in_vault")
+    .notNull()
+    .default(0),
+  fileIndexInFolder: integer("file_index_in_folder")
+    .notNull()
+    .default(0),
 });
 
 
@@ -91,6 +81,5 @@ export const tables = {
   users,
   userAuths,
   userSettings,
-  vault,
-  githubAppAccess,
+  githubRepoAccess,
 };

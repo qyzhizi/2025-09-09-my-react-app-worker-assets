@@ -2,9 +2,47 @@ import { DurableObject } from "cloudflare:workers";
 import { NotFoundError, ValidationError } from "@/types/error"
 import type { Task, PushGitRepoTaskParams, PushGitRepoTaskRespon } from "@/types/durable";
 
+const MAX_FILES_PER_FOLDER = 1000;
+
+interface FileLocationResult {
+    folderIndex: number;
+    fileIndex: number;
+    folderPath: string;
+    filePath: string;
+    needCreateFolder: boolean;
+}
+
+function normalizeGitHubPath(path: string): string {
+    return path
+        .replace(/\\/g, '/')        // 禁止反斜杠
+        .replace(/\/+/g, '/')       // 合并多余 /
+        .replace(/^\/|\/$/g, '');   // 去掉首尾 /
+}
+
+function getFolderPath(
+    vaultPathInRepo: string,
+    vaultName: string,
+    folderIndex: number
+): string {
+
+    if (!Number.isInteger(folderIndex) || folderIndex < 0) {
+        throw new Error(`Invalid folder index: ${folderIndex}`);
+    }
+
+    const rawPath = [
+        vaultPathInRepo,
+        vaultName,
+        `Folder_${folderIndex}`
+    ].filter(Boolean).join('/');
+
+    return normalizeGitHubPath(rawPath);
+}
+
+
 /** A Durable Object's behavior is defined in an exported Javascript class */
 export class MyDurableObject extends DurableObject<Env> {
     private state: DurableObjectState;
+    env: Env;
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
      * 	`DurableObjectStub::get` for a given identifier (no-op constructors can be omitted)
@@ -15,14 +53,19 @@ export class MyDurableObject extends DurableObject<Env> {
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env);
         this.state = ctx;
-        this.initialize();
+        this.env = env;
+        this.initialize(false);
     }
 
-    async initialize() {
+    async initialize(forceInit: boolean = false) {
         let stored = await this.state.storage.get("initialized");
-        if (!stored) {
+        if (!stored || forceInit) {
           // 初始化操作
           await this.state.storage.put("initialized", true);
+
+          await this.state.storage.put("folderIndexInVault", 0);
+          await this.state.storage.put("fileIndexInFolder", -1);
+
         }
       }
     /**
@@ -83,10 +126,10 @@ export class MyDurableObject extends DurableObject<Env> {
             accessToken: data.accessToken ?? '',
             githubUserName: data.githubUserName ?? '',
             repoName: data.repoName ?? '',
-            branch: data.branch ?? 'main',
+            vaultPathInRepo: data.vaultPathInRepo ?? '',
+            vaultName: data.vaultName ?? '',
             content: data.content ?? '',
             completed: false,
-            filePath: data.filePath ?? '',
             createdAt: data.createdAt ?? new Date().toISOString()
         };
 
@@ -103,14 +146,127 @@ export class MyDurableObject extends DurableObject<Env> {
         return task;
     }
 
+async createEmptyFolderPathInRepo(
+    accessToken: string,
+    githubUserName: string,
+    repoName: string,
+    folderPath: string
+) {
+    const normalizedFolderPath = folderPath
+        .replace(/\\/g, '/')
+        .replace(/\/+/g, '/')
+        .replace(/^\/|\/$/g, '');
+    const placeholderFilePath = `${normalizedFolderPath}/.gitkeep`;
+    console.log("Creating folder in repo at path:", placeholderFilePath);
+
+    const res = await fetch(
+        `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${placeholderFilePath}`,
+        {
+            method: 'PUT',
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'User-Agent': 'Hono-Worker',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message: `Init folder ${normalizedFolderPath}`,
+                content: Buffer.from('').toString('base64'),
+            }),
+        }
+    );
+
+    // 201 = created, 200 = updated（幂等）
+    if (!res.ok && res.status !== 200) {
+        throw new Error(await res.text());
+    }
+}
+
+    async getNextFileLocation(params: {
+        vaultPathInRepo: string;
+        vaultName: string;
+        folderIndex: number;
+        fileIndex: number;
+        maxFilesPerFolder: number;
+    }): Promise<FileLocationResult> {
+
+        const {
+            vaultPathInRepo,
+            vaultName,
+            folderIndex,
+            fileIndex,
+            maxFilesPerFolder
+        } = params;
+
+        let nextFolderIndex = folderIndex;
+        let nextFileIndex = fileIndex + 1;
+        let needCreateFolder = false;
+
+        // 首次初始化（fileIndex = -1 代表还没写过文件）
+        if (folderIndex === 0 && fileIndex === -1) {
+            needCreateFolder = true;
+            nextFileIndex = 0;
+        }
+
+        // 文件数超限，进入新 folder
+        if (nextFileIndex >= maxFilesPerFolder) {
+            nextFileIndex = 0;
+            nextFolderIndex++;
+            needCreateFolder = true;
+        }
+
+        const folderPath = getFolderPath(vaultPathInRepo, vaultName, nextFolderIndex);
+        const filePath = `${folderPath}/File_${nextFileIndex}.md`;
+
+        return {
+            folderIndex: nextFolderIndex,
+            fileIndex: nextFileIndex,
+            folderPath,
+            filePath,
+            needCreateFolder
+        };
+    }
+
     async processGithubPushTask(id: string): Promise<PushGitRepoTaskRespon> {
         const taskParams = await this.state.storage.get<PushGitRepoTaskParams>(id);
         if (!taskParams) {
         throw new NotFoundError(`Task with id=${id} not found`);
         }
 
-        const {commitMessage, accessToken, githubUserName, repoName, content, completed, filePath  } = taskParams;
         console.log("Processing taskParams:", taskParams);
+        const {commitMessage, accessToken, githubUserName, repoName, vaultPathInRepo, vaultName, content, completed  } = taskParams;
+        // get folderIndexInVault and fileIndexInFolder
+        let folder_index_in_vault = await this.state.storage.get<number>("folderIndexInVault");
+        let file_index_in_folder = await this.state.storage.get<number>("fileIndexInFolder");
+        if (folder_index_in_vault === undefined) {
+            throw new Error("folderIndexInVault is undefined in DO storage");
+        }
+        if (file_index_in_folder === undefined) {
+            throw new Error("fileIndexInFolder is undefined in DO storage");
+        }
+
+        const result: FileLocationResult = await this.getNextFileLocation({
+            vaultPathInRepo,
+            vaultName,
+            folderIndex: folder_index_in_vault,
+            fileIndex: file_index_in_folder,
+            maxFilesPerFolder: MAX_FILES_PER_FOLDER
+        });
+
+        folder_index_in_vault = result.folderIndex;
+        file_index_in_folder = result.fileIndex;
+
+        if (result.needCreateFolder) {
+            await this.createEmptyFolderPathInRepo(
+                accessToken,
+                githubUserName,
+                repoName,
+                result.folderPath
+            );
+        }
+
+        // 使用 result.filePath 写文件
+        const filePath = result.filePath;
+
         if (completed) {
             return { "id": id, "completed": true };
         }
@@ -152,6 +308,9 @@ export class MyDurableObject extends DurableObject<Env> {
             }
             // 解析 GitHub 响应
             //   const result = (await githubRes.json()) as { content: { sha: string } };
+            // save updated folderIndexInVault and fileIndexInFolder
+            await this.state.storage.put("folderIndexInVault", folder_index_in_vault);
+            await this.state.storage.put("fileIndexInFolder", file_index_in_folder);
         } catch (error) {
             console.error('任务处理失败:', error, "id: ", id);
             throw new Error(`Failed to process GitHub push: ${error}`);

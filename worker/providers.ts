@@ -1,9 +1,9 @@
 import type { Context } from "hono";
-import { getGithubAppAccessInfo } from "./infrastructure/githubAppAccess";
+import { getgithubRepoAccessInfo } from "./infrastructure/githubRepoAccess";
 import {TokenExpiredError, DBError } from "@/types/error";
-import { addOrUpdateGithubAppAccessData } from "@/infrastructure/githubAppAccess";
+import { addOrUpdategithubRepoAccessData } from "@/infrastructure/githubRepoAccess";
 
-interface GitHubAppAccessInfo {
+interface githubRepoAccessInfo {
   accessToken: string | null;
   githubUserName: string | null;
   githubRepoName: string | null;
@@ -36,8 +36,8 @@ interface testGitHubRepoAcessInfo{
 //   return value instanceof Date;
 // }
 
-export async function getOrUpdateGitHubAppAccessInfo(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<GitHubAppAccessInfo | null> {
-  const gitHubAccessInfo = await getGithubAppAccessInfo(c);
+export async function getOrUpdategithubRepoAccessInfo(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<githubRepoAccessInfo | null> {
+  const gitHubAccessInfo = await getgithubRepoAccessInfo(c);
   const refreshToken = gitHubAccessInfo?.refreshToken ?? null;
   const accessToken = gitHubAccessInfo?.accessToken ?? null;
   const accessTokenExpiresAt = gitHubAccessInfo?.accessTokenExpiresAt ?? null;
@@ -76,8 +76,8 @@ export async function getOrUpdateGitHubAppAccessInfo(c: Context<{ Bindings: Env,
       const githubAppTokenInfo:GitHubAppTokenInfo = await transformGitHubAppTokenInfo(refreshedOriginTokenInfo)
       // update db
       try {
-        await addOrUpdateGithubAppAccessData(c, githubAppTokenInfo)
-        console.log("addOrUpdateGithubAppAccessData: ", "success")
+        await addOrUpdategithubRepoAccessData(c, githubAppTokenInfo)
+        console.log("addOrUpdategithubRepoAccessData: ", "success")
       } catch (dbError) {
         console.error('更新 GitHub App 访问数据时出错:', dbError)
         throw new DBError("fail to add or update github app access data ")

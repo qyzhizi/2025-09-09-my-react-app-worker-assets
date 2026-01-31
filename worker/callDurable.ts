@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { NotFoundError, ValidationError } from "@/types/error"
 
+const DURABLE_NAME_PREFIX = 'MemoflowDO_'
 
 export const durableHello = async (c: Context) => {
     // Create a `DurableObjectId` for an instance of the `MemoflowDurableObject`
@@ -21,9 +22,8 @@ export const durableHello = async (c: Context) => {
 
 export const durableCreateGithubPushParamsTask = async (c: Context,
     taskParams: Partial<PushGitRepoTaskParams>) => {
-    // const id: DurableObjectId = c.env.MemoFlow_DURABLE_OBJECT.idFromName("MemoflowDO");
-    // const stub = c.env.MemoFlow_DURABLE_OBJECT.get(id);
-    const doId = c.env.MY_DURABLE_OBJECT.idFromName('MemoflowDO')
+    const durableObjectName = `${DURABLE_NAME_PREFIX}${c.get("userId")}`;
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(durableObjectName)
     const stub = c.env.MY_DURABLE_OBJECT.get(doId)
 
     try {
@@ -48,7 +48,8 @@ export const durableCreateGithubPushParamsTask = async (c: Context,
 
 export const durableProcessGithubPush = async (c: Context,
     taskId: string) => {
-    const doId = c.env.MY_DURABLE_OBJECT.idFromName('MemoflowDO')
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+        `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
     const stub = c.env.MY_DURABLE_OBJECT.get(doId)
 
     // try {
