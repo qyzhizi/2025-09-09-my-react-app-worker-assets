@@ -2,13 +2,7 @@ import type { Context } from "hono";
 import { getgithubRepoAccessInfo } from "./infrastructure/githubRepoAccess";
 import {TokenExpiredError, DBError } from "@/types/error";
 import { addOrUpdategithubRepoAccessData } from "@/infrastructure/githubRepoAccess";
-
-interface githubRepoAccessInfo {
-  accessToken: string | null;
-  githubUserName: string | null;
-  githubRepoName: string | null;
-  // accessTokenExpiresAt: Date | null;
-}
+import {type GithubRepoAccess} from "@/infrastructure/types";
 
 interface OriginGitHubAppTokenInfo {
   access_token: string ;
@@ -36,30 +30,17 @@ interface testGitHubRepoAcessInfo{
 //   return value instanceof Date;
 // }
 
-export async function getOrUpdategithubRepoAccessInfo(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<githubRepoAccessInfo | null> {
-  const gitHubAccessInfo = await getgithubRepoAccessInfo(c);
+export async function getOrUpdategithubRepoAccessInfo(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<GithubRepoAccess | null> {
+  let gitHubAccessInfo = await getgithubRepoAccessInfo(c);
+  if (!gitHubAccessInfo) {
+    return null;
+  }
   const refreshToken = gitHubAccessInfo?.refreshToken ?? null;
-  const accessToken = gitHubAccessInfo?.accessToken ?? null;
   const accessTokenExpiresAt = gitHubAccessInfo?.accessTokenExpiresAt ?? null;
   const refreshTokenExpiresAt = gitHubAccessInfo?.refreshTokenExpiresAt ?? null;
-  const githubUserName = gitHubAccessInfo?.githubUserName ?? null;
-  const githubRepoName = gitHubAccessInfo?.githubRepoName ?? null;
   
-  // // 断言检查 accessTokenExpiresAt 是否为 Date 类型
-  // if (accessTokenExpiresAt !== null && !isDate(accessTokenExpiresAt)) {
-  //   console.warn("accessTokenExpiresAt is not a Date instance:", accessTokenExpiresAt, typeof accessTokenExpiresAt);
-  // }
-  
-  // // 断言检查 refreshTokenExpiresAt 是否为 Date 类型
-  // if (accessTokenExpiresAt !== null && !isDate(refreshTokenExpiresAt)) {
-  //   console.warn("refreshTokenExpiresAt is not a Date instance:",refreshTokenExpiresAt, typeof refreshTokenExpiresAt);
-  // }
-  
-  // console.log("gitHubAccessInfo: ", gitHubAccessInfo)
   // 获取当前时间
   const currentTime = Date.now(); // utc time
-  // console.log("currentTime: ", currentTime)
-  // console.log("accessTokenExpiresAt.getTime(): ", accessTokenExpiresAt?.getTime())
 
   // if access_token has expired
   if (accessTokenExpiresAt && currentTime > accessTokenExpiresAt.getTime()) {
@@ -72,26 +53,31 @@ export async function getOrUpdategithubRepoAccessInfo(c: Context<{ Bindings: Env
 
     if (refreshToken) {
       const refreshedOriginTokenInfo:OriginGitHubAppTokenInfo = await getGitHubAccessTokenByRefreshToken(c, refreshToken);
-      // console.log("test refreshedOriginTokenInfo: ", refreshedOriginTokenInfo);
       const githubAppTokenInfo:GitHubAppTokenInfo = await transformGitHubAppTokenInfo(refreshedOriginTokenInfo)
       // update db
       try {
         await addOrUpdategithubRepoAccessData(c, githubAppTokenInfo)
         console.log("addOrUpdategithubRepoAccessData: ", "success")
+        
+        // 更新 gitHubAccessInfo 的 token 相关数据
+        gitHubAccessInfo = {
+          ...gitHubAccessInfo,
+          accessToken: githubAppTokenInfo.accessToken,
+          accessTokenExpiresAt: githubAppTokenInfo.accessTokenExpiresAt,
+          refreshToken: githubAppTokenInfo.refreshToken,
+          refreshTokenExpiresAt: githubAppTokenInfo.refreshTokenExpiresAt
+        };
       } catch (dbError) {
         console.error('更新 GitHub App 访问数据时出错:', dbError)
         throw new DBError("fail to add or update github app access data ")
       }
-  
-      return {
-        "accessToken": githubAppTokenInfo.accessToken,
-        githubUserName,
-        githubRepoName
-      };
+    } else {
+      console.error("No refreshToken available to refresh accessToken")
+      throw new TokenExpiredError("No refreshToken available to refresh accessToken");
     }
   }
-  return {accessToken,githubUserName, githubRepoName }
-
+  
+  return gitHubAccessInfo;
 }
 
 async function getGitHubAccessTokenByRefreshToken(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>, refreshToken: string): Promise<OriginGitHubAppTokenInfo> {

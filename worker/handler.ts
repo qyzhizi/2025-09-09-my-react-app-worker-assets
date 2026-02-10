@@ -29,6 +29,7 @@ import { validateGitRepoFullName } from "@/common"
 import { ValidationError, NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
 import {testGitHubRepoAcess} from "@/providers"
+import {type GithubRepoAccess} from "@/infrastructure/types";
 
 const VALIDATION_TARGET = {
   QUERY: "query",
@@ -284,33 +285,36 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       created_at: now,
       taskId: taskId,
     }
-    var existingRecord = await findgithubRepoAccessByUserId(c);
 
-    // console.log("existingRecord:", existingRecord)
-    // 先检查 existingRecord 是否存在
-    if (!existingRecord) {
+    const githubAccessInfo: GithubRepoAccess | null = await getOrUpdategithubRepoAccessInfo(c)
+    if (!githubAccessInfo || !githubAccessInfo.accessToken){
+      throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!")
+    }
+
+    // 先检查 githubAccessInfo 是否存在
+    if (!githubAccessInfo) {
       return c.json({ error: "GitHub app access record not found" }, 404);
     }
-    if (!existingRecord.githubRepoName){
+    if (!githubAccessInfo.githubRepoName){
       return c.json({ error: "githubRepoName is not exist" }, 400);
     }
-    if (!existingRecord.accessToken || !existingRecord.githubUserName || !existingRecord.githubRepoName) {
-      // console.log("existingRecord:", existingRecord)
+    if (!githubAccessInfo.accessToken || !githubAccessInfo.githubUserName || !githubAccessInfo.githubRepoName) {
+      // console.log("githubAccessInfo:", githubAccessInfo)
       return c.json({ error: "Incomplete GitHub access record" }, 400);
     }
     // get vaultName
-    const vaultPathInRepo = existingRecord.vaultPathInRepo;
-    const vaultName = existingRecord.vaultName;
+    const vaultPathInRepo = githubAccessInfo.vaultPathInRepo;
+    const vaultName = githubAccessInfo.vaultName;
     if (!vaultPathInRepo || vaultPathInRepo.trim() === '') {
-      return c.json({ error: 'Empty vaultPathInRepo in existingRecord' }, 400);
+      return c.json({ error: 'Empty vaultPathInRepo in githubAccessInfo' }, 400);
     }
 
     const taskParams: Partial<PushGitRepoTaskParams> = {
       id: logEntry.taskId,
       commitMessage: logEntry.message,
-      accessToken: existingRecord.accessToken,
-      githubUserName: existingRecord.githubUserName,
-      repoName: existingRecord.githubRepoName,
+      accessToken: githubAccessInfo.accessToken,
+      githubUserName: githubAccessInfo.githubUserName,
+      repoName: githubAccessInfo.githubRepoName,
       vaultPathInRepo: vaultPathInRepo,
       vaultName: vaultName,
       content: logEntry.content,

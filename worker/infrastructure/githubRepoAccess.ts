@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { Context } from "hono";
 
 import { tables, githubRepoAccess} from "./db/schema";
+import {type GithubRepoAccess} from "./types";
 
 export const addOrUpdategithubRepoAccessData = async (
     c: Context,
@@ -93,7 +94,7 @@ export const safeUpdategithubRepoAccessByUserId = async (
     .where(eq(githubRepoAccess.userId, userId));
 };
   
-export const getgithubRepoAccessInfo = async (c: Context) => {
+export const getgithubRepoAccessInfo = async (c: Context): Promise<GithubRepoAccess | undefined> => {
   const db = drizzle(c.env.DB, { schema: tables });
   const userId = c.get("userId");
 
