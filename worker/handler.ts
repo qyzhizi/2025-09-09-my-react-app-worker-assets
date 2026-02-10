@@ -20,7 +20,6 @@ import { getUserSettingsFromDb, updateUserSettingsToDb } from "@/infrastructure/
 import { addOrUpdategithubRepoAccessData } from "@/infrastructure/githubRepoAccess";
 import {getVaultInfo} from '@/infrastructure/githubRepoAccess'
 import { safeUpdategithubRepoAccessByUserId,
-  findgithubRepoAccessByUserId,
   getgithubRepoAccessInfo, 
 } from "@/infrastructure/githubRepoAccess"
 import type { PushGitRepoTaskParams } from "@/types/durable";
