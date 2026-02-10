@@ -172,7 +172,7 @@ export const findManyUsers = async (c: Context): Promise<User[]> => {
 export const getUserAvatarUrl = async (
   c: Context<{ Bindings: Env, Variables: { userId: string , userName: string} }>,
   userId: string
-  ): Promise<string> =>{
+  ): Promise<string | null> =>{
   const db = drizzle(c.env.DB, { schema: tables });
   const user = await db.query.users.findFirst({
     where: (users, { eq }) => eq(users.id, userId),
@@ -180,7 +180,7 @@ export const getUserAvatarUrl = async (
       avatar_url: true
     }
   });
-  return user?.avatar_url ?? "";
+  return user?.avatar_url ?? null;
 }
 
 export const getUserById = async (

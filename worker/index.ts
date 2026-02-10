@@ -24,7 +24,10 @@ import {
   githubAppSetupHandler,
   getGitHubAppInstallationReposHandler,
   setStoragePreferenceHandler,
-  getStoragePreferenceHandler
+  getStoragePreferenceHandler,
+  getDODatabaseStatusHandler,
+  resetDoKeyStorageAndSqliteHandler,
+  getArticleContentListHandler,
  } from '@/handler'
 
 
@@ -62,6 +65,7 @@ app.get("/user/avatar-url", getUserAvatarUrlHandler);
 app.get("/user/info", getUserInfoHandler);
 
 app.post('/diary-log/addlog', addLogHandler)
+app.get('/article/content/list', getArticleContentListHandler)
 app.post('/storage/preference', setStoragePreferenceHandler)
 app.get('/storage/preference', getStoragePreferenceHandler)
 app.post('/save-repo-and-test-connection', saveRepoAndTestConnectionHandler)
@@ -69,9 +73,11 @@ app.get('/get-github-repo-info', getGitHubRepoInfoHandler)
 app.get('/vault/info', getVaultInfoHandler)
 app.get('/github-app-setup', githubAppSetupHandler)
 app.get('/get-githubapp-installation-repositories', getGitHubAppInstallationReposHandler)
+app.get('/do-database-status', getDODatabaseStatusHandler)
+app.get('/reset-durable-object', resetDoKeyStorageAndSqliteHandler)
 // 独立导出 scheduled 方法
 export default {
   fetch: app.fetch,  // 将 app.fetch 作为 fetch 函数导出
 } satisfies ExportedHandler<Env>;
 
-export { MyDurableObject } from './DurableController'
+export { MyDurableObject } from './durable/DurableController'

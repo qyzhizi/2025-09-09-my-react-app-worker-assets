@@ -23,6 +23,6 @@ export interface PushGitRepoTaskParams {
 }
 
 export interface PushGitRepoTaskRespon {
-    id: string;
+    taskId: string;
     completed: boolean;
 }

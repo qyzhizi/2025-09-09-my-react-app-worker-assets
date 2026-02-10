@@ -8,8 +8,12 @@ import { getInstallationRepositories } from '@/githubApp'
 
 import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService'
 import {durableHello,
-  durableCreateGithubPushParamsTask,
-  durableProcessGithubPush} from "@/callDurable"
+  durableCreateTaskAndSaveArticleToDB,
+  durablePushToGitHub,
+  getDODatabaseStatus,
+  resetDoKeyStorageAndSqlite,
+  getArticleContentList,
+} from "@/durable/callDurable"
 import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
 import { getUserById } from "@/infrastructure/user";
 import { getUserSettingsFromDb, updateUserSettingsToDb } from "@/infrastructure/userSettings";
@@ -245,7 +249,12 @@ export const getUserAvatarUrlHandler = async (
     Bindings: Env;
     Variables: { userId: string , userName: string};
   }>): Promise<Response> => {
+  console.log("getUserAvatarUrlHandler called with userId:", c.get("userId"));
   const avatarUrl = await getUserAvatarUrl(c, c.get("userId"));
+  // if not avatarUrl, return 401
+  if (!avatarUrl) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
   return c.json({ avatar_url: avatarUrl });
 };
 
@@ -308,11 +317,11 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       completed: false,
       createdAt: logEntry.created_at,
     }
-    await durableCreateGithubPushParamsTask(c, taskParams)
+    await durableCreateTaskAndSaveArticleToDB(c, taskParams)
     // console.log("createdTask:", createdTask)
     
     try {
-      const result = await durableProcessGithubPush(c, taskId);
+      const result = await durablePushToGitHub(c, taskId);
       return c.json(result);
     } catch (error) {
       console.error("Error in fetchMemoflowTaskHandler:", error);
@@ -321,6 +330,40 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
   } catch (err) {
     console.error('Error in addLogHandler:', err)
     return c.json({ error: 'Internal Server Error' }, 500)
+  }
+}
+
+export async function getArticleContentListHandler(c: Context<{ Bindings: Env; Variables: { userId: string; userName: string } }>): Promise<Response> {
+  const page = c.req.query("page");
+  const pageSize = c.req.query("pageSize");
+
+  console.log("getArticleContentListHandler called with:", { page, pageSize });
+  if (!page || !pageSize) {
+    return c.json({ error: 'Missing page or pageSize' }, 400);
+  }
+
+  const articleList = await getArticleContentList(c, parseInt(page), parseInt(pageSize));
+  return c.json(articleList);
+}
+
+export async function getDODatabaseStatusHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  try {
+    const dbStatus = await getDODatabaseStatus(c);
+    // console.log("dbStatus: ", JSON.stringify(dbStatus, null, 2));
+    return c.json(dbStatus);
+  } catch (error) {
+    console.error("Error in getDODatabaseStatusHandler:", error);
+    return c.json({ error: "Internal Server Error" }, 500);
+  }
+}
+
+export async function resetDoKeyStorageAndSqliteHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  try {
+    const result = await resetDoKeyStorageAndSqlite(c);
+    return c.json(result);
+  } catch (error) {
+    console.error("Error in resetDoKeyStorageAndSqliteHandler:", error);
+    return c.json({ error: "Internal Server Error" }, 500);
   }
 }
 

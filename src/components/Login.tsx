@@ -32,12 +32,6 @@ export function Login() {
       >
         GitHub Login
       </a>
-      <a
-        href="/api/github-app/auth"
-        className="px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-900 inline-block"
-      >
-        GitHub App Auth
-      </a>
     </div>
   )
 }

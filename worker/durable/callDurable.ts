@@ -20,7 +20,7 @@ export const durableHello = async (c: Context) => {
     return c.json({ commitMessage: greeting });
 }
 
-export const durableCreateGithubPushParamsTask = async (c: Context,
+export const durableCreateTaskAndSaveArticleToDB = async (c: Context,
     taskParams: Partial<PushGitRepoTaskParams>) => {
     const durableObjectName = `${DURABLE_NAME_PREFIX}${c.get("userId")}`;
     const doId = c.env.MY_DURABLE_OBJECT.idFromName(durableObjectName)
@@ -28,7 +28,7 @@ export const durableCreateGithubPushParamsTask = async (c: Context,
 
     try {
         // console.log("taskParams: ", taskParams)
-        const createdTask = await stub.createGithubPushParamsTask(taskParams)
+        const createdTask = await stub.createTaskAndSaveArticleToDB(taskParams)
         return c.json(createdTask, 201) // 201 Created
         // const greeting = await stub.sayHello("world, lzp");
         // return c.json(greeting, 201) // 201 Created
@@ -41,12 +41,12 @@ export const durableCreateGithubPushParamsTask = async (c: Context,
             return c.text(err.message, 404)
         }
 
-        console.error('Unexpected error in createGithubPushParamsTask:', err)
+        console.error('Unexpected error in createTaskAndSaveArticleToDB:', err)
         return c.text('Internal Server Error', 500)
     }
 }
 
-export const durableProcessGithubPush = async (c: Context,
+export const durablePushToGitHub = async (c: Context,
     taskId: string) => {
     const doId = c.env.MY_DURABLE_OBJECT.idFromName(
         `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
@@ -78,4 +78,46 @@ export const durableProcessGithubPush = async (c: Context,
 
     // 用户立即得到响应，不等任务完成
     return { status: "accepted", taskId };
+}
+
+export const getDODatabaseStatus = async (c: Context) => {
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+        `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
+    const stub = c.env.MY_DURABLE_OBJECT.get(doId)
+
+    try {
+        const dbStatus = await stub.getDODBStatus()
+        return dbStatus
+    } catch (err) {
+        console.error('Unexpected error in getDODBStatus:', err)
+        return c.text('Internal Server Error', 500)
+    }
+}
+
+export const resetDoKeyStorageAndSqlite = async (c: Context) => {
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+        `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
+    const stub = c.env.MY_DURABLE_OBJECT.get(doId)
+
+    try {
+        const resetResult = await stub.resetDoKeyStorageAndSqlite()
+        return resetResult
+    } catch (err) {
+        console.error('Unexpected error in resetDoKeyStorageAndSqlite:', err)
+        return c.text('Internal Server Error', 500)
+    }
+}
+
+export const getArticleContentList = async (c: Context, page: number, pageSize: number) => {
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+        `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
+    const stub = c.env.MY_DURABLE_OBJECT.get(doId)
+
+    try {
+        const articleList = await stub.getArticleContentList(page, pageSize)
+        return articleList
+    } catch (err) {
+        console.error('Unexpected error in getArticleContentList:', err)
+        return c.text('Internal Server Error', 500)
+    }
 }
