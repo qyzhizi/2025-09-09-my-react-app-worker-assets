@@ -430,7 +430,7 @@ export class MyDurableObject extends DurableObject<Env> {
             }
 
             // reset DO storage
-            await this.state.storage.put("initialized", false);
+            // await this.state.storage.put("initialized", false);
             await this.state.storage.put("folderIndexInVault", 0);
             await this.state.storage.put("fileIndexInFolder", -1);
 
