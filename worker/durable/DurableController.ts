@@ -41,6 +41,7 @@ export class MyDurableObject extends DurableObject<Env> {
         let stored = await this.state.storage.get("initialized");
         if (!stored || forceInit) {
           // 初始化操作
+          console.log("Durable Object initializing storage...");
           await this.state.storage.put("initialized", true);
 
           await this.state.storage.put("folderIndexInVault", 0);
@@ -431,7 +432,7 @@ export class MyDurableObject extends DurableObject<Env> {
             // reset DO storage
             await this.state.storage.put("initialized", false);
             await this.state.storage.put("folderIndexInVault", 0);
-            await this.state.storage.put("fileIndexInFolder", 0);
+            await this.state.storage.put("fileIndexInFolder", -1);
 
             // 重置 SQLite 数据库
             const sqliteResetResult = await this.sqliteRepository.resetTables();
