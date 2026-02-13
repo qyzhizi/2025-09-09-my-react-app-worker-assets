@@ -286,9 +286,7 @@ export class MyDurableObject extends DurableObject<Env> {
         throw new NotFoundError(`Task with taskId=${taskId} not found`);
         }
 
-        console.log("Processing taskParams:", taskParams);
         const {commitMessage, accessToken, githubUserName, repoName, vaultPathInRepo, vaultName, content, completed  } = taskParams;
-        // get folderIndexInVault and fileIndexInFolder
         let folder_index_in_vault = await this.state.storage.get<number>("folderIndexInVault");
         let file_index_in_folder = await this.state.storage.get<number>("fileIndexInFolder");
         if (folder_index_in_vault === undefined) {

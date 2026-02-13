@@ -1,6 +1,6 @@
 import type { ReactNode, FC } from 'react'
 
-import LogInput from './components/LogInput'
+import Logs from './components/Logs'
 import { Login } from './components/Login'
 import { InitRefreshToken } from './components/InitRefreshToken'
 import MainSettingPage from './components/settings/MainSettingPage'
@@ -28,14 +28,8 @@ export const routes: RouteConfig[] = [
     layout: EmptyLayout,
   },
   {
-    path: '/loginput',
-    element: <LogInput />,
-    layout: AppLayout,
-    auth: true,
-  },
-  {
     path: '/',
-    element: <LogInput />,
+    element: <Logs />,
     layout: AppLayout,
     auth: true,
   },

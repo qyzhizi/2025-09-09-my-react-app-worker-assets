@@ -249,7 +249,6 @@ export const getUserAvatarUrlHandler = async (
     Bindings: Env;
     Variables: { userId: string , userName: string};
   }>): Promise<Response> => {
-  console.log("getUserAvatarUrlHandler called with userId:", c.get("userId"));
   const avatarUrl = await getUserAvatarUrl(c, c.get("userId"));
   // if not avatarUrl, return 401
   if (!avatarUrl) {
@@ -410,12 +409,21 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     }
     const accessToken = githubAccessInfo.accessToken
     const dbGithubUserName = githubAccessInfo.githubUserName
+    const dbGithubRepoName = githubAccessInfo.githubRepoName
+    const dbVaultPathInRepo = githubAccessInfo.vaultPathInRepo
     if (!dbGithubUserName ) {
       throw new NotGetAccessTokenError("Fail to get GitHub username, Please login GitHub first, then try again!")
     }
     if (githubUserName !== dbGithubUserName ) {
       console.log({githubUserName, dbGithubUserName})
       throw new NotGetAccessTokenError(" Input is inconsistent with DB  , Please login GitHub first, then try again!")
+    }
+    let durableIsReset = false
+    if (vaultPathInRepo !== dbVaultPathInRepo || githubRepoName !== dbGithubRepoName) {
+      console.warn("vaultPathInRepo or githubRepoName is different from DB!")
+      // reset durable object storage and sqlite to avoid potential issue caused by inconsistent repoName or vaultPathInRepo
+      await resetDoKeyStorageAndSqlite(c)
+      durableIsReset = true
     }
 
     try{
@@ -424,6 +432,10 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return c.json({"success": "false", "error": errorMessage}, 400)
+    }
+    if (durableIsReset) {
+      console.log("Durable Object storage and sqlite reset done.")
+      return c.json({"success": `${githubUserName}/${githubRepoName} saved, durable object reset done, connecting success!`})
     }
     
     return c.json({"success": `${githubUserName}/${githubRepoName} saved, connecting success!`})
@@ -472,10 +484,8 @@ export async function getGitHubAppInstallationReposHandler(c:Context<{Bindings: 
   const rawPrivateKeyPem= c.env.GITHUB_APP_PRIVATE_PEM
   // 将字符串转换为换行符
   const privateKeyPem = rawPrivateKeyPem.replace(/\\n/g, '\n')
-  console.log("githubAppPrivateKey: ", privateKeyPem)
   const installationData = await getInstallationRepositories(
     installationId, githubAppId, privateKeyPem)
-  console.log(installationData)
   return c.json({installationData})
 }
 
