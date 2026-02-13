@@ -281,15 +281,17 @@ export class MyDurableObject extends DurableObject<Env> {
 
     }
 
-    async processGithubPushTask(taskId: string): Promise<PushGitRepoTaskRespon> {
-        const taskParams = await this.state.storage.get<PushGitRepoTaskParams>(taskId);
-        if (!taskParams) {
-        throw new NotFoundError(`Task with taskId=${taskId} not found`);
-        }
-
-        const {commitMessage, accessToken, githubUserName, repoName, vaultPathInRepo, vaultName, content, completed  } = taskParams;
-        let folder_index_in_vault = await this.state.storage.get<number>("folderIndexInVault");
-        let file_index_in_folder = await this.state.storage.get<number>("fileIndexInFolder");
+    /**
+     * 原子地分配下一个文件位置索引，并立即写回存储。
+     * 这个方法内部没有 await fetch，所以在单次 I/O turn 中完成，
+     * 保证不会被其他并发请求插入，从而避免索引竞态。
+     */
+    private async allocateNextFileLocation(params: {
+        vaultPathInRepo: string;
+        vaultName: string;
+    }): Promise<FileLocationResult> {
+        const folder_index_in_vault = await this.state.storage.get<number>("folderIndexInVault");
+        const file_index_in_folder = await this.state.storage.get<number>("fileIndexInFolder");
         if (folder_index_in_vault === undefined) {
             throw new Error("folderIndexInVault is undefined in DO storage");
         }
@@ -298,16 +300,42 @@ export class MyDurableObject extends DurableObject<Env> {
         }
 
         const result: FileLocationResult = await this.getNextFileLocation({
-            vaultPathInRepo,
-            vaultName,
+            vaultPathInRepo: params.vaultPathInRepo,
+            vaultName: params.vaultName,
             folderIndex: folder_index_in_vault,
             fileIndex: file_index_in_folder,
             maxFilesPerFolder: MAX_FILES_PER_FOLDER
         });
 
-        folder_index_in_vault = result.folderIndex;
-        file_index_in_folder = result.fileIndex;
+        // 立即将新索引写回存储（在发起任何 fetch 之前），
+        // 这样即使后续 await fetch 让出执行权，其他并发请求读到的也是已更新的索引。
+        // 代价：如果后续 GitHub push 失败，这个文件编号会被"跳过"，但这是无害的。
+        await this.state.storage.put("folderIndexInVault", result.folderIndex);
+        await this.state.storage.put("fileIndexInFolder", result.fileIndex);
 
+        return result;
+    }
+
+    async processGithubPushTask(taskId: string): Promise<PushGitRepoTaskRespon> {
+        const taskParams = await this.state.storage.get<PushGitRepoTaskParams>(taskId);
+        if (!taskParams) {
+            throw new NotFoundError(`Task with taskId=${taskId} not found`);
+        }
+
+        const { commitMessage, accessToken, githubUserName, repoName, vaultPathInRepo, vaultName, content, completed } = taskParams;
+
+        if (completed) {
+            return { "taskId": taskId, "completed": true };
+        }
+
+        // ====== 第一步：原子分配索引（无 fetch，不会让出并发） ======
+        const result = await this.allocateNextFileLocation({
+            vaultPathInRepo,
+            vaultName,
+        });
+        console.log("Determined file location:", result);
+
+        // ====== 第二步：执行 GitHub 网络操作（有 fetch，可能让出并发，但索引已安全更新） ======
         if (result.needCreateFolder) {
             await this.createEmptyFolderPathInRepo(
                 accessToken,
@@ -317,13 +345,7 @@ export class MyDurableObject extends DurableObject<Env> {
             );
         }
 
-        // 使用 result.filePath 写文件
         const filePath = result.filePath;
-
-        if (completed) {
-            return { "taskId": taskId, "completed": true };
-        }
-
         let fileSha: string | null = null;
         const fileUrl = `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${filePath}`;
         try {
@@ -359,22 +381,13 @@ export class MyDurableObject extends DurableObject<Env> {
             if (!githubRes.ok) {
                 throw new Error(await githubRes.text());
             }
-            // 解析 GitHub 响应
-            //   const result = (await githubRes.json()) as { content: { sha: string } };
-            // save updated folderIndexInVault and fileIndexInFolder
-            await this.state.storage.put("folderIndexInVault", folder_index_in_vault);
-            await this.state.storage.put("fileIndexInFolder", file_index_in_folder);
         } catch (error) {
             console.error('任务处理失败:', error, "taskId: ", taskId);
             throw new Error(`Failed to process GitHub push: ${error}`);
-            // return {"taskId": taskId, "completed": false}
         }
-        // 例如标记为已完成
-        // taskParams.completed = true;
-        // await this.state.storage.put(taskId, taskParams);
 
         // 删除已处理的任务
-        await this.deleteTask(taskId)
+        await this.deleteTask(taskId);
         return { "taskId": taskId, "completed": true };
     }
 
