@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { apiFetch } from '@/common';
 import { Loader2 } from 'lucide-react';
+import { micromark } from 'micromark';
+import { gfm, gfmHtml } from 'micromark-extension-gfm';
 
 interface LogItem {
   id: string;
@@ -40,6 +42,16 @@ const LogList = ({ refreshFlag }: LogListProps) => {
     fetchLogs();
   }, [refreshFlag]);
 
+  const renderedLogs = useMemo(() => {
+    return logs.map((log) => ({
+      ...log,
+      html: micromark(log.content, {
+        extensions: [gfm()],
+        htmlExtensions: [gfmHtml()],
+      }),
+    }));
+  }, [logs]);
+
   if (loading) {
     return (
       <div className="w-full flex justify-center items-center py-8">
@@ -67,7 +79,7 @@ const LogList = ({ refreshFlag }: LogListProps) => {
 
   return (
     <div className="w-full flex flex-col gap-2 mt-2">
-      {logs.map((log) => (
+      {renderedLogs.map((log) => (
         <div
           key={log.id}
           className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-900"
@@ -77,9 +89,10 @@ const LogList = ({ refreshFlag }: LogListProps) => {
               {new Date(log.createdAt).toLocaleString()}
             </span>
           </div>
-          <div className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words">
-            {log.content}
-          </div>
+          <div
+            className="prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 break-words"
+            dangerouslySetInnerHTML={{ __html: log.html }}
+          />
         </div>
       ))}
     </div>
