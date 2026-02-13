@@ -21,6 +21,12 @@ export class MyDurableObject extends DurableObject<Env> {
     private sql: any;
     private sqliteRepository: SqliteRepository;
     /**
+     * GitHub 推送串行化锁。
+     * Contents API 在同一 branch 上并发提交会导致 409（Git HEAD 竞态），
+     * 通过 Promise 链保证同一时刻只有一个推送在执行。
+     */
+    private githubPushQueue: Promise<any> = Promise.resolve();
+    /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
      * 	`DurableObjectStub::get` for a given identifier (no-op constructors can be omitted)
      *
@@ -167,27 +173,56 @@ export class MyDurableObject extends DurableObject<Env> {
             return;
         }
 
-        const res = await fetch(
-            `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${placeholderFilePath}`,
-            {
-                method: 'PUT',
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    'User-Agent': 'Hono-Worker',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    message: `Init folder ${normalizedFolderPath}`,
-                    content: Buffer.from('').toString('base64'),
-                }),
-            }
-        );
         console.log("Creating folder in repo at path:", placeholderFilePath);
 
-        // 201 = created, 200 = updated（幂等）
-        if (!res.ok && res.status !== 200) {
-            console.log("Failed to create folder:", await res.text());
-            throw new Error(await res.text());
+        const MAX_RETRIES = 3;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            // 如果是重试，重新检查文件是否已被其他并发请求创建
+            if (attempt > 0) {
+                const recheckExists = await this.checkFileExistsInRepo(accessToken, githubUserName, repoName, placeholderFilePath);
+                if (recheckExists) {
+                    console.log("File was created by another request during retry, skipping.");
+                    return;
+                }
+            }
+
+            const res = await fetch(
+                `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${placeholderFilePath}`,
+                {
+                    method: 'PUT',
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'User-Agent': 'Hono-Worker',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: `Init folder ${normalizedFolderPath}`,
+                        content: Buffer.from('').toString('base64'),
+                    }),
+                }
+            );
+
+            // 201 = created, 200 = updated（幂等）
+            if (res.ok || res.status === 200) {
+                return;
+            }
+
+            // 409 冲突：可能有并发请求正在操作同一文件
+            if (res.status === 409 && attempt < MAX_RETRIES - 1) {
+                console.warn(`SHA conflict (409) creating folder on attempt ${attempt + 1}, retrying...`);
+                await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+                continue;
+            }
+
+            // 422 表示文件已存在（竞态创建）
+            if (res.status === 422) {
+                console.log("File already exists (422), skipping.");
+                return;
+            }
+
+            const errorText = await res.text();
+            console.log("Failed to create folder:", errorText);
+            throw new Error(errorText);
         }
     }
 
@@ -291,7 +326,11 @@ export class MyDurableObject extends DurableObject<Env> {
         vaultName: string;
     }): Promise<FileLocationResult> {
         const folder_index_in_vault = await this.state.storage.get<number>("folderIndexInVault");
+        console.log("folder_index_in_vault", folder_index_in_vault);
+     
         const file_index_in_folder = await this.state.storage.get<number>("fileIndexInFolder");
+        console.log("file_index_in_folder", file_index_in_folder);
+
         if (folder_index_in_vault === undefined) {
             throw new Error("folderIndexInVault is undefined in DO storage");
         }
@@ -317,6 +356,19 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     async processGithubPushTask(taskId: string): Promise<PushGitRepoTaskRespon> {
+        // 通过 Promise 链串行化所有 GitHub 推送，避免同一 branch 上的并发提交导致 409。
+        // 原理：GitHub Contents API 每次 PUT 都会创建一个新 commit，
+        // 如果两个 PUT 并发基于同一个 HEAD commit，后提交的那个就会 409。
+        // 即使写的是不同文件也会冲突，因为冲突发生在 Git branch 级别，不是文件级别。
+        const promise = this.githubPushQueue.then(() =>
+            this._doProcessGithubPushTask(taskId)
+        );
+        // 无论成功失败，都更新队列尾部（用 catch 防止链断裂）
+        this.githubPushQueue = promise.catch(() => {});
+        return promise;
+    }
+
+    private async _doProcessGithubPushTask(taskId: string): Promise<PushGitRepoTaskRespon> {
         const taskParams = await this.state.storage.get<PushGitRepoTaskParams>(taskId);
         if (!taskParams) {
             throw new NotFoundError(`Task with taskId=${taskId} not found`);
@@ -328,14 +380,14 @@ export class MyDurableObject extends DurableObject<Env> {
             return { "taskId": taskId, "completed": true };
         }
 
-        // ====== 第一步：原子分配索引（无 fetch，不会让出并发） ======
+        // ====== 第一步：分配文件索引 ======
         const result = await this.allocateNextFileLocation({
             vaultPathInRepo,
             vaultName,
         });
         console.log("Determined file location:", result);
 
-        // ====== 第二步：执行 GitHub 网络操作（有 fetch，可能让出并发，但索引已安全更新） ======
+        // ====== 第二步：执行 GitHub 网络操作（已通过 githubPushQueue 串行化，不会并发冲突） ======
         if (result.needCreateFolder) {
             await this.createEmptyFolderPathInRepo(
                 accessToken,
@@ -346,44 +398,65 @@ export class MyDurableObject extends DurableObject<Env> {
         }
 
         const filePath = result.filePath;
-        let fileSha: string | null = null;
         const fileUrl = `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${filePath}`;
-        try {
-            // 检查文件是否存在
-            const fileRes = await fetch(fileUrl, {
-                method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    'User-Agent': 'Hono-Worker',
-                },
-            });
+        const base64Content = Buffer.from(content, 'utf-8').toString('base64');
 
-            if (fileRes.ok) {
-                // 明确类型 { sha: string }
-                const fileData = (await fileRes.json()) as { sha: string };
-                fileSha = fileData.sha; // 获取已有文件的 SHA 以进行更新
-            }
-            const base64Content = Buffer.from(content, 'utf-8').toString('base64');
-            // 提交到 GitHub（创建或更新）
-            const githubRes = await fetch(fileUrl, {
-                method: 'PUT',
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    'User-Agent': 'Hono-Worker',
-                },
-                body: JSON.stringify({
-                    message: commitMessage,
-                    content: base64Content,
-                    sha: fileSha || undefined, // 只有在更新时才传 sha
-                }),
-            });
+        const MAX_RETRIES = 3;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                // 每次重试都重新获取最新 SHA，避免并发导致的 SHA 过期
+                let fileSha: string | null = null;
+                const fileRes = await fetch(fileUrl, {
+                    method: 'GET',
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'User-Agent': 'Hono-Worker',
+                    },
+                });
 
-            if (!githubRes.ok) {
+                if (fileRes.ok) {
+                    const fileData = (await fileRes.json()) as { sha: string };
+                    fileSha = fileData.sha;
+                }
+
+                // 提交到 GitHub（创建或更新）
+                const githubRes = await fetch(fileUrl, {
+                    method: 'PUT',
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'User-Agent': 'Hono-Worker',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: commitMessage,
+                        content: base64Content,
+                        sha: fileSha || undefined,
+                    }),
+                });
+
+                if (githubRes.ok) {
+                    break; // 成功，跳出重试循环
+                }
+
+                // 409 冲突：SHA 过期，可以重试
+                if (githubRes.status === 409 && attempt < MAX_RETRIES - 1) {
+                    console.warn(`SHA conflict (409) on attempt ${attempt + 1}, retrying...`, "taskId:", taskId);
+                    // 短暂等待，给并发请求完成的时间（指数退避）
+                    await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+                    continue;
+                }
+
+                // 其他错误或重试次数已耗尽
                 throw new Error(await githubRes.text());
+            } catch (error) {
+                if (attempt < MAX_RETRIES - 1 && error instanceof Error && error.message.includes('409')) {
+                    console.warn(`Retry ${attempt + 1}/${MAX_RETRIES} due to conflict, taskId:`, taskId);
+                    await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+                    continue;
+                }
+                console.error('任务处理失败:', error, "taskId: ", taskId);
+                throw new Error(`Failed to process GitHub push: ${error}`);
             }
-        } catch (error) {
-            console.error('任务处理失败:', error, "taskId: ", taskId);
-            throw new Error(`Failed to process GitHub push: ${error}`);
         }
 
         // 删除已处理的任务
