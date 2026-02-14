@@ -107,6 +107,16 @@ export class SqliteRepository {
         this.sql.exec(`
             CREATE INDEX IF NOT EXISTS idx_title ON articleContent(title);
         `);
+
+        // Create kvMeta table for persistent key-value storage
+        // Used to store critical state like file indices that must survive DO eviction
+        this.sql.exec(`
+            CREATE TABLE IF NOT EXISTS kvMeta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
     }
 
     /**
@@ -443,7 +453,6 @@ export class SqliteRepository {
         `, pageSize, (page - 1) * pageSize);
         const resultArray = this.convertCursorToArray(result);
         console.log("getArticleContentList called with:", { page, pageSize });
-        console.log("getArticleContentList result:", resultArray);
         return resultArray;
 
     }
@@ -770,9 +779,64 @@ export class SqliteRepository {
         debugResult.sections.tables = this.debugGetAllTables();
         debugResult.sections.counters = this.debugGetTableCounters();
         debugResult.sections.lruCache = this.debugGetRecentAccess();
+        debugResult.sections.kvMeta = this.getAllKvMeta();
 
         return debugResult;
     }    
+
+    // ===================== kvMeta key-value storage =====================
+
+    /**
+     * 获取 kvMeta 中的值
+     * @returns 值字符串，不存在返回 null
+     */
+    getKvMeta(key: string): string | null {
+        const result = this.sql.exec(
+            `SELECT value FROM kvMeta WHERE key = ? LIMIT 1`,
+            key
+        );
+        const arr = this.convertCursorToArray(result);
+        return arr.length > 0 ? arr[0].value : null;
+    }
+
+    /**
+     * 获取 kvMeta 中的数字值
+     * @returns 数字，不存在返回 null
+     */
+    getKvMetaNumber(key: string): number | null {
+        const raw = this.getKvMeta(key);
+        if (raw === null) return null;
+        const num = Number(raw);
+        return Number.isFinite(num) ? num : null;
+    }
+
+    /**
+     * 设置 kvMeta 中的值（upsert）
+     */
+    setKvMeta(key: string, value: string | number | boolean): void {
+        this.sql.exec(
+            `INSERT INTO kvMeta (key, value, updatedAt)
+             VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+            key,
+            String(value)
+        );
+    }
+
+    /**
+     * 删除 kvMeta 中的某个键
+     */
+    deleteKvMeta(key: string): void {
+        this.sql.exec(`DELETE FROM kvMeta WHERE key = ?`, key);
+    }
+
+    /**
+     * 获取 kvMeta 中所有键值对（调试用）
+     */
+    getAllKvMeta(): Array<{ key: string; value: string; updatedAt: string }> {
+        const result = this.sql.exec(`SELECT key, value, updatedAt FROM kvMeta ORDER BY key`);
+        return this.convertCursorToArray(result);
+    }
 
     // Reset all tables
     resetTables(): any {
@@ -794,11 +858,21 @@ export class SqliteRepository {
                 VALUES ('titleIndex', 0), ('articleContent', 0)
             `);
 
+            // Reset kvMeta file indices to initial values
+            this.sql.exec(`DELETE FROM kvMeta`);
+            this.sql.exec(`
+                INSERT INTO kvMeta (key, value)
+                VALUES ('initialized', 'true'),
+                       ('folderIndexInVault', '0'),
+                       ('fileIndexInFolder', '-1')
+            `);
+
             result.data.deletedTables = ['titleIndex', 'articleContent'];
             result.data.preservedStructures = [
                 'Table structure fully preserved',
                 'Index structure fully preserved: idx_hashOfTitle, idx_last_access_id, idx_title',
-                'Counter has been reset to 0'
+                'Counter has been reset to 0',
+                'kvMeta file indices reset to initial values (folderIndex=0, fileIndex=-1)'
             ];
 
             return result;

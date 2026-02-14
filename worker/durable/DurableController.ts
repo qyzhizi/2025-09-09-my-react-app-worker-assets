@@ -40,19 +40,28 @@ export class MyDurableObject extends DurableObject<Env> {
         this.sql = ctx.storage.sql;
         this.sqliteRepository = new SqliteRepository(this.sql, MAX_ARTICLES_TO_STORE);
         this.sqliteRepository.initializeTables();
-        this.initialize(false);
+
+        // 使用 blockConcurrencyWhile 确保初始化在处理任何 RPC 请求之前完成，
+        // 避免 DO 被驱逐后重建时，索引被重置或读取到未初始化的状态。
+        ctx.blockConcurrencyWhile(async () => {
+            await this.initialize(false);
+        });
     }
 
     async initialize(forceInit: boolean = false) {
-        let stored = await this.state.storage.get("initialized");
-        if (!stored || forceInit) {
-          // 初始化操作
-          console.log("Durable Object initializing storage...");
-          await this.state.storage.put("initialized", true);
-
-          await this.state.storage.put("folderIndexInVault", 0);
-          await this.state.storage.put("fileIndexInFolder", -1);
-
+        // 从 SQLite kvMeta 表中读取初始化标记（持久化，不会因 DO 驱逐而丢失）
+        const stored = this.sqliteRepository.getKvMeta("initialized");
+        if (stored !== 'true' || forceInit) {
+          // 首次初始化：设置文件索引起始值
+          console.log("Durable Object initializing storage (writing to SQLite kvMeta)...");
+          this.sqliteRepository.setKvMeta("initialized", "true");
+          this.sqliteRepository.setKvMeta("folderIndexInVault", 0);
+          this.sqliteRepository.setKvMeta("fileIndexInFolder", -1);
+        } else {
+          // DO 被驱逐后重建：从 SQLite 读取（SQLite 是持久化的，不会丢失）
+          const folderIndex = this.sqliteRepository.getKvMetaNumber("folderIndexInVault");
+          const fileIndex = this.sqliteRepository.getKvMetaNumber("fileIndexInFolder");
+          console.log("Durable Object restored from SQLite kvMeta, folderIndex:", folderIndex, "fileIndex:", fileIndex);
         }
       }
     /**
@@ -317,25 +326,24 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     /**
-     * 原子地分配下一个文件位置索引，并立即写回存储。
-     * 这个方法内部没有 await fetch，所以在单次 I/O turn 中完成，
-     * 保证不会被其他并发请求插入，从而避免索引竞态。
+     * 原子地分配下一个文件位置索引，并立即写回 SQLite kvMeta。
+     * SQLite 操作是同步的，保证不会被其他并发请求插入，从而避免索引竞态。
      */
     private async allocateNextFileLocation(params: {
         vaultPathInRepo: string;
         vaultName: string;
     }): Promise<FileLocationResult> {
-        const folder_index_in_vault = await this.state.storage.get<number>("folderIndexInVault");
+        const folder_index_in_vault = this.sqliteRepository.getKvMetaNumber("folderIndexInVault");
         console.log("folder_index_in_vault", folder_index_in_vault);
      
-        const file_index_in_folder = await this.state.storage.get<number>("fileIndexInFolder");
+        const file_index_in_folder = this.sqliteRepository.getKvMetaNumber("fileIndexInFolder");
         console.log("file_index_in_folder", file_index_in_folder);
 
-        if (folder_index_in_vault === undefined) {
-            throw new Error("folderIndexInVault is undefined in DO storage");
+        if (folder_index_in_vault === null) {
+            throw new Error("folderIndexInVault is missing in SQLite kvMeta");
         }
-        if (file_index_in_folder === undefined) {
-            throw new Error("fileIndexInFolder is undefined in DO storage");
+        if (file_index_in_folder === null) {
+            throw new Error("fileIndexInFolder is missing in SQLite kvMeta");
         }
 
         const result: FileLocationResult = await this.getNextFileLocation({
@@ -346,11 +354,11 @@ export class MyDurableObject extends DurableObject<Env> {
             maxFilesPerFolder: MAX_FILES_PER_FOLDER
         });
 
-        // 立即将新索引写回存储（在发起任何 fetch 之前），
+        // 立即将新索引写回 SQLite kvMeta（同步操作，不会让出执行权），
         // 这样即使后续 await fetch 让出执行权，其他并发请求读到的也是已更新的索引。
         // 代价：如果后续 GitHub push 失败，这个文件编号会被"跳过"，但这是无害的。
-        await this.state.storage.put("folderIndexInVault", result.folderIndex);
-        await this.state.storage.put("fileIndexInFolder", result.fileIndex);
+        this.sqliteRepository.setKvMeta("folderIndexInVault", result.folderIndex);
+        this.sqliteRepository.setKvMeta("fileIndexInFolder", result.fileIndex);
 
         return result;
     }
@@ -507,7 +515,7 @@ export class MyDurableObject extends DurableObject<Env> {
                 data: {}
             };
 
-            // clear Do storage entries 
+            // clear Do storage entries (tasks)
             const entries = await this.state.storage.list<Task>();
             const deletedTaskKeys: string[] = [];
             for (const key of entries.keys()) {
@@ -515,20 +523,12 @@ export class MyDurableObject extends DurableObject<Env> {
                 await this.state.storage.delete(key);
             }
 
-            // reset DO storage
-            // await this.state.storage.put("initialized", false);
-            await this.state.storage.put("folderIndexInVault", 0);
-            await this.state.storage.put("fileIndexInFolder", -1);
-
-            // 重置 SQLite 数据库
+            // 重置 SQLite 数据库（包括 kvMeta 中的文件索引）
             const sqliteResetResult = await this.sqliteRepository.resetTables();
 
             result.data.doStorage = {
                 deletedTaskCount: deletedTaskKeys.length,
                 deletedTaskKeys: deletedTaskKeys,
-                resetInitialized: false,
-                resetFolderIndexInVault: 0,
-                resetFileIndexInFolder: 0
             };
 
             result.data.sqlite = sqliteResetResult;
