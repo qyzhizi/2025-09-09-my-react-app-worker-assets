@@ -24,7 +24,7 @@ import { safeUpdategithubRepoAccessByUserId,
 } from "@/infrastructure/githubRepoAccess"
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { Provider } from "@/types/provider";
-import { validateGitRepoFullName } from "@/common"
+import { validateGitRepoFullName, getTitleFromContent } from "@/common"
 import { ValidationError, NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
 import {testGitHubRepoAcess} from "@/providers"
@@ -276,12 +276,14 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
 
     const taskId = nanoid()
     const now = new Date().toISOString()
+    const title = await getTitleFromContent(content) 
 
     const logEntry = {
       message: "update by Memoflow",
       content,
       created_at: now,
       taskId: taskId,
+      title: title,
     }
 
     const githubAccessInfo: GithubRepoAccess | null = await getOrUpdategithubRepoAccessInfo(c)
@@ -315,6 +317,7 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       repoName: githubAccessInfo.githubRepoName,
       vaultPathInRepo: vaultPathInRepo,
       vaultName: vaultName,
+      title: logEntry.title,
       content: logEntry.content,
       completed: false,
       createdAt: logEntry.created_at,

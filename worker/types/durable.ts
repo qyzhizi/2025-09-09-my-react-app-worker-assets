@@ -17,6 +17,7 @@ export interface PushGitRepoTaskParams {
     vaultPathInRepo: string;
     vaultName: string;
     branch?: string;
+    title: string;
     content: string;
     completed: boolean;
     createdAt?: string;

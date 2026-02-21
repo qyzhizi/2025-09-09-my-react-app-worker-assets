@@ -5,6 +5,9 @@ import { SqliteRepository } from "@/durable/repository";
 
 const MAX_FILES_PER_FOLDER = 1000;
 const MAX_ARTICLES_TO_STORE = 1000;
+const MAX_SINGLE_FILE_TITLE_INDEX = 1000;
+/** titleIndexCache 积攒到此数量后，批量 flush 到 GitHub 索引文件 */
+const TITLE_INDEX_CACHE_FLUSH_THRESHOLD = 10;
 
 interface FileLocationResult {
     folderIndex: number;
@@ -12,6 +15,10 @@ interface FileLocationResult {
     folderPath: string;
     filePath: string;
     needCreateFolder: boolean;
+    currentTitleIndexCount: number;
+    indexOfTitleIndexFiles: number;
+    titleIndexFilePath: string;
+    needCreateIndexFile: boolean;
 }
 
 /** A Durable Object's behavior is defined in an exported Javascript class */
@@ -57,11 +64,18 @@ export class MyDurableObject extends DurableObject<Env> {
           this.sqliteRepository.setKvMeta("initialized", "true");
           this.sqliteRepository.setKvMeta("folderIndexInVault", 0);
           this.sqliteRepository.setKvMeta("fileIndexInFolder", -1);
+
+          // currentTitleIndexCount
+          this.sqliteRepository.setKvMeta("currentTitleIndexCount", 0);
+          this.sqliteRepository.setKvMeta("indexOfTitleIndexFiles", -1);
         } else {
           // DO 被驱逐后重建：从 SQLite 读取（SQLite 是持久化的，不会丢失）
           const folderIndex = this.sqliteRepository.getKvMetaNumber("folderIndexInVault");
           const fileIndex = this.sqliteRepository.getKvMetaNumber("fileIndexInFolder");
-          console.log("Durable Object restored from SQLite kvMeta, folderIndex:", folderIndex, "fileIndex:", fileIndex);
+          const indexOfTitleIndexFiles = this.sqliteRepository.getKvMetaNumber("indexOfTitleIndexFiles");
+          const currentTitleIndexCount = this.sqliteRepository.getKvMetaNumber("currentTitleIndexCount");
+
+          console.log("Durable Object restored from SQLite kvMeta, folderIndex:", folderIndex, "fileIndex:", fileIndex, "indexOfTitleIndexFiles:", indexOfTitleIndexFiles, "currentTitleIndexCount:", currentTitleIndexCount);
         }
       }
     /**
@@ -124,6 +138,7 @@ export class MyDurableObject extends DurableObject<Env> {
             repoName: data.repoName ?? '',
             vaultPathInRepo: data.vaultPathInRepo ?? '',
             vaultName: data.vaultName ?? '',
+            title: data.title ?? '',
             content: data.content ?? '',
             completed: false,
             createdAt: data.createdAt ?? new Date().toISOString()
@@ -132,7 +147,7 @@ export class MyDurableObject extends DurableObject<Env> {
         await this.state.storage.put(data.id, params);
         // save content to DO SQL for later query and analysis
         console.log("Saving content to Durable Object SQL:", data.content);
-        await this.saveContentToDOSql(data.content);
+        await this.saveContentToDOSql(data.title, data.content);
         return params;
     }
 
@@ -187,14 +202,6 @@ export class MyDurableObject extends DurableObject<Env> {
         const MAX_RETRIES = 3;
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
             // 如果是重试，重新检查文件是否已被其他并发请求创建
-            if (attempt > 0) {
-                const recheckExists = await this.checkFileExistsInRepo(accessToken, githubUserName, repoName, placeholderFilePath);
-                if (recheckExists) {
-                    console.log("File was created by another request during retry, skipping.");
-                    return;
-                }
-            }
-
             const res = await fetch(
                 `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${placeholderFilePath}`,
                 {
@@ -219,7 +226,7 @@ export class MyDurableObject extends DurableObject<Env> {
             // 409 冲突：可能有并发请求正在操作同一文件
             if (res.status === 409 && attempt < MAX_RETRIES - 1) {
                 console.warn(`SHA conflict (409) creating folder on attempt ${attempt + 1}, retrying...`);
-                await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+                await new Promise(r => setTimeout(r, 50 * Math.pow(2, attempt)));
                 continue;
             }
 
@@ -231,8 +238,69 @@ export class MyDurableObject extends DurableObject<Env> {
 
             const errorText = await res.text();
             console.log("Failed to create folder:", errorText);
-            throw new Error(errorText);
+            // throw new Error(errorText);
         }
+        // 如果重试耗尽仍失败，可以选择抛出错误或记录日志后继续（根据业务需求）
+        console.error("Failed to create folder after multiple attempts.");
+        // throw new Error("Failed to create folder after multiple attempts.");
+        throw new Error("Failed to create folder after multiple attempts.");
+    }
+
+    async createEmptyFileInRepo(
+        accessToken: string,
+        githubUserName: string,
+        repoName: string,
+        filePath: string
+    ) {
+        // normalize file path to prevent issues with leading/trailing slashes or backslashes
+        const normalizedFilePath = filePath
+            .replace(/\\/g, '/')
+            .replace(/\/+/g, '/')
+            .replace(/^\/|\/$/g, '');
+
+        console.log("Creating empty file in repo at path:", normalizedFilePath);
+
+        const MAX_RETRIES = 3;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            const res = await fetch(
+                `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${normalizedFilePath}`,
+                {
+                    method: 'PUT',
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'User-Agent': 'Hono-Worker',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: `Init file ${normalizedFilePath}`,
+                        content: Buffer.from('').toString('base64'),
+                    }),
+                }
+            );
+
+            // 201 = created, 200 = updated（幂等）
+            if (res.ok) {
+                return;
+            }
+
+            // 409 冲突：可能有并发请求正在操作同一分支
+            if (res.status === 409 && attempt < MAX_RETRIES - 1) {
+                console.warn(`SHA conflict (409) creating file on attempt ${attempt + 1}, retrying...`);
+                await new Promise(r => setTimeout(r, 50 * Math.pow(2, attempt)));
+                continue;
+            }
+
+            // 422 表示文件已存在（竞态创建）
+            if (res.status === 422) {
+                console.log("File already exists (422), skipping.");
+                return;
+            }
+
+            const errorText = await res.text();
+            console.log("Failed to create file:", errorText);
+        }
+        console.error("Failed to create file after multiple attempts.");
+        throw new Error("Failed to create file after multiple attempts.");
     }
 
     async getNextFileLocation(params: {
@@ -240,7 +308,10 @@ export class MyDurableObject extends DurableObject<Env> {
         vaultName: string;
         folderIndex: number;
         fileIndex: number;
+        currentTitleIndexCount: number; // 当前标题索引数量，用于判断是否需要切换到新文件存储标题索引
+        indexOfTitleIndexFiles: number; // 当前用于存储标题索引的文件编号
         maxFilesPerFolder: number;
+        maxSingleFileTitleIndex: number;
     }): Promise<FileLocationResult> {
 
         const {
@@ -248,12 +319,18 @@ export class MyDurableObject extends DurableObject<Env> {
             vaultName,
             folderIndex,
             fileIndex,
-            maxFilesPerFolder
+            currentTitleIndexCount,
+            indexOfTitleIndexFiles,
+            maxFilesPerFolder,
+            maxSingleFileTitleIndex,
         } = params;
 
         let nextFolderIndex = folderIndex;
         let nextFileIndex = fileIndex + 1;
         let needCreateFolder = false;
+        let nextIndexOfTitleIndexFiles = indexOfTitleIndexFiles;
+        let needCreateIndexFile = false;
+        let nextCurrentTitleIndexCount = currentTitleIndexCount + 1;
 
         // 首次初始化（fileIndex = -1 代表还没写过文件）
         if (folderIndex === 0 && fileIndex === -1) {
@@ -268,19 +345,31 @@ export class MyDurableObject extends DurableObject<Env> {
             needCreateFolder = true;
         }
 
+        // 标题索引数超限，进入新文件
+        if (currentTitleIndexCount % maxSingleFileTitleIndex === 0) {
+            needCreateIndexFile = true;
+            nextIndexOfTitleIndexFiles = (indexOfTitleIndexFiles ?? -1) + 1;
+            nextCurrentTitleIndexCount = 0; // 重置当前标题索引计数，开始计数新文件的标题索引数量
+        }
+
         const folderPath = getFolderPath(vaultPathInRepo, vaultName, nextFolderIndex);
         const filePath = `${folderPath}/File_${nextFileIndex}.md`;
+        const titleIndexFilePath = `${folderPath}/TitleIndex_${nextIndexOfTitleIndexFiles}.json`;
 
         return {
             folderIndex: nextFolderIndex,
             fileIndex: nextFileIndex,
             folderPath,
             filePath,
-            needCreateFolder
+            needCreateFolder,
+            currentTitleIndexCount: nextCurrentTitleIndexCount,
+            indexOfTitleIndexFiles: nextIndexOfTitleIndexFiles,
+            titleIndexFilePath,
+            needCreateIndexFile,
         };
     }
 
-    async saveContentToDOSql(content: string): Promise<any> {
+    async saveContentToDOSql(title: string, content: string): Promise<any> {
         // const taskParams = await this.state.storage.get<PushGitRepoTaskParams>(taskId);
         // if (!taskParams) {
         // throw new NotFoundError(`Task with taskId=${taskId} not found`);
@@ -289,27 +378,12 @@ export class MyDurableObject extends DurableObject<Env> {
         // console.log("Saving content to DO SQL, taskParams:", taskParams);
         // const { content } = taskParams;
 
-        // 使用正则表达式提取标题
-        let title = '';
-        
-        // 首先查找 #que 后面跟一个空格的行
-        const queMatch = content.match(/^\x20{0,2}#que(?:\x20)(.*)$/m);
-        if (queMatch && queMatch[1]) {
-            title = queMatch[1].trim();
-        } else {
-            // 如果没有找到 #que，查找第一个 “# “后面跟一个空格的行
-            const headerMatch = content.match(/^\x20{0,2}#(?:\x20)(.*)$/m);
-            if (headerMatch && headerMatch[1]) {
-                title = headerMatch[1].trim();
-            }
-        }
-        console.log("Extracted title: ", title)
-        console.log("Extracted content length: ", content?.length || 0)
+
 
         // 参数验证
         if (title === undefined || title === null || title === '') {
             console.warn("Warning: title is empty, using default");
-            title = '未命名文档';
+            title = '';
         }
         if (content === undefined || content === null || content === '') {
             throw new Error("Content cannot be empty");
@@ -346,12 +420,19 @@ export class MyDurableObject extends DurableObject<Env> {
             throw new Error("fileIndexInFolder is missing in SQLite kvMeta");
         }
 
+        const currentTitleIndexCount = this.sqliteRepository.getKvMetaNumber("currentTitleIndexCount") || 0;
+        const indexOfTitleIndexFiles = this.sqliteRepository.getKvMetaNumber("indexOfTitleIndexFiles") ?? -1;
+        console.log("currentTitleIndexCount", currentTitleIndexCount, "indexOfTitleIndexFiles", indexOfTitleIndexFiles);
+
         const result: FileLocationResult = await this.getNextFileLocation({
             vaultPathInRepo: params.vaultPathInRepo,
             vaultName: params.vaultName,
             folderIndex: folder_index_in_vault,
             fileIndex: file_index_in_folder,
-            maxFilesPerFolder: MAX_FILES_PER_FOLDER
+            currentTitleIndexCount,
+            indexOfTitleIndexFiles,
+            maxFilesPerFolder: MAX_FILES_PER_FOLDER,
+            maxSingleFileTitleIndex: MAX_SINGLE_FILE_TITLE_INDEX,
         });
 
         // 立即将新索引写回 SQLite kvMeta（同步操作，不会让出执行权），
@@ -359,6 +440,11 @@ export class MyDurableObject extends DurableObject<Env> {
         // 代价：如果后续 GitHub push 失败，这个文件编号会被"跳过"，但这是无害的。
         this.sqliteRepository.setKvMeta("folderIndexInVault", result.folderIndex);
         this.sqliteRepository.setKvMeta("fileIndexInFolder", result.fileIndex);
+
+        // console.log("Updating indexOfTitleIndexFiles in SQLite kvMeta, indexOfTitleIndexFiles:", result.indexOfTitleIndexFiles)
+        this.sqliteRepository.setKvMeta("indexOfTitleIndexFiles", result.indexOfTitleIndexFiles);
+        // console.log("Updated indexOfTitleIndexFiles in SQLite kvMeta, indexOfTitleIndexFiles:", this.sqliteRepository.getKvMetaNumber("indexOfTitleIndexFiles"))
+        this.sqliteRepository.setKvMeta("currentTitleIndexCount", result.currentTitleIndexCount);
 
         return result;
     }
@@ -382,30 +468,89 @@ export class MyDurableObject extends DurableObject<Env> {
             throw new NotFoundError(`Task with taskId=${taskId} not found`);
         }
 
-        const { commitMessage, accessToken, githubUserName, repoName, vaultPathInRepo, vaultName, content, completed } = taskParams;
+        const { commitMessage, accessToken, githubUserName, repoName, vaultPathInRepo, vaultName, title, content, completed } = taskParams;
 
         if (completed) {
             return { "taskId": taskId, "completed": true };
         }
 
         // ====== 第一步：分配文件索引 ======
-        const result = await this.allocateNextFileLocation({
+        const result: FileLocationResult = await this.allocateNextFileLocation({
             vaultPathInRepo,
             vaultName,
         });
         console.log("Determined file location:", result);
 
         // ====== 第二步：执行 GitHub 网络操作（已通过 githubPushQueue 串行化，不会并发冲突） ======
+        // 文件夹创建和索引文件创建写的是不同文件，可并发执行；
+        // 若两者同时触发可能产生 409，但各自内部已有重试逻辑可兜底。
+        const initTasks: Promise<void>[] = [];
         if (result.needCreateFolder) {
-            await this.createEmptyFolderPathInRepo(
+            initTasks.push(
+                this.createEmptyFolderPathInRepo(
+                    accessToken,
+                    githubUserName,
+                    repoName,
+                    result.folderPath
+                )
+            );
+        }
+        if (result.needCreateIndexFile) {
+            initTasks.push(
+                this.createEmptyFileInRepo(
+                    accessToken,
+                    githubUserName,
+                    repoName,
+                    result.titleIndexFilePath
+                )
+            );
+        }
+        if (initTasks.length > 0) {
+            await Promise.all(initTasks);
+        }
+
+        await this.pushFileToGitHub({
+            accessToken,
+            githubUserName,
+            repoName,
+            filePath: result.filePath,
+            content,
+            commitMessage,
+            taskId,
+        });
+
+        // 先发送到 titleIndexCache, titleIndex, 如果 titleIndexCache 满足一定数量就将 titleIndexCache 内容追加到 GitHub titleIndexFilePath 文件页面最前面，保证索引文件内容是最新的
+        // title 不能为空字符串，否则会导致哈希计算出错，进而无法正确生成索引和远程路径
+        // title 如果为空 or  ''，跳过索引更新，但仍然推送内容文件到 GitHub，保证文章内容不会因为索引问题而丢失
+        if (title) {
+            await this.pushTitleIndexCacheToGitHub({
                 accessToken,
                 githubUserName,
                 repoName,
-                result.folderPath
-            );
+                titleIndexFilePath: result.titleIndexFilePath,
+                commitMessage,
+                title,
+            });
         }
 
-        const filePath = result.filePath;
+        // 删除已处理的任务
+        await this.deleteTask(taskId);
+        return { "taskId": taskId, "completed": true };
+    }
+
+    /**
+     * 将文件内容推送到 GitHub 仓库（创建或更新），内置重试机制处理 409 冲突。
+     */
+    private async pushFileToGitHub(params: {
+        accessToken: string;
+        githubUserName: string;
+        repoName: string;
+        filePath: string;
+        content: string;
+        commitMessage: string;
+        taskId: string;
+    }): Promise<void> {
+        const { accessToken, githubUserName, repoName, filePath, content, commitMessage, taskId } = params;
         const fileUrl = `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${filePath}`;
         const base64Content = Buffer.from(content, 'utf-8').toString('base64');
 
@@ -449,7 +594,6 @@ export class MyDurableObject extends DurableObject<Env> {
                 // 409 冲突：SHA 过期，可以重试
                 if (githubRes.status === 409 && attempt < MAX_RETRIES - 1) {
                     console.warn(`SHA conflict (409) on attempt ${attempt + 1}, retrying...`, "taskId:", taskId);
-                    // 短暂等待，给并发请求完成的时间（指数退避）
                     await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
                     continue;
                 }
@@ -466,10 +610,165 @@ export class MyDurableObject extends DurableObject<Env> {
                 throw new Error(`Failed to process GitHub push: ${error}`);
             }
         }
+    }
 
-        // 删除已处理的任务
-        await this.deleteTask(taskId);
-        return { "taskId": taskId, "completed": true };
+    /**
+     * 将当前 title 写入 titleIndex（本地 LRU）和 titleIndexCache（待推送缓冲），
+     * 当 titleIndexCache 条数达到 TITLE_INDEX_CACHE_FLUSH_THRESHOLD 时，
+     * 将缓冲内容批量 prepend 到 GitHub 上的 titleIndexFilePath 文件，
+     * 然后清空 titleIndexCache。
+     *
+     * 这样可以把多条标题索引合并成一次 GitHub commit，减少 API 调用频率，
+     * 同时保证索引文件中最新的条目出现在文件最前面。
+     */
+    private async pushTitleIndexCacheToGitHub(params: {
+        accessToken: string;
+        githubUserName: string;
+        repoName: string;
+        titleIndexFilePath: string;
+        commitMessage: string;
+        title: string;
+    }): Promise<void> {
+        const { accessToken, githubUserName, repoName, titleIndexFilePath, commitMessage, title } = params;
+
+        // ---- 1. 计算 title 的哈希 & 生成远程文章路径 ----
+        const encoder = new TextEncoder();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(title));
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashOfTitle = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+        // remoteArticlePath 使用当前 titleIndexFilePath 所在目录；
+        // 这里存储的是文件实际推送路径，由 allocateNextFileLocation 决定
+        const remoteArticlePath = titleIndexFilePath;
+
+        // ---- 2. 同时写入 titleIndex（本地 LRU）和 titleIndexCache（待推送缓冲） ----
+        const insertParams = { title, hashOfTitle, remoteArticlePath };
+        await this.sqliteRepository.insertTitleIndex(insertParams);
+        // insertParams.title 不可以 为 ‘‘ 空字符串，直接抛出错误
+        if (!insertParams.title) {
+            throw new Error('Title is required');
+        }
+        await this.sqliteRepository.insertTitleIndexCache(insertParams);
+
+        // ---- 3. 检查 cache 是否达到 flush 阈值 ----
+        const cacheCount = await this.sqliteRepository.getTitleIndexCacheCount();
+        console.log(`titleIndexCache count: ${cacheCount}, threshold: ${TITLE_INDEX_CACHE_FLUSH_THRESHOLD}`);
+
+        if (cacheCount < TITLE_INDEX_CACHE_FLUSH_THRESHOLD) {
+            // 还没攒够，等下次再推
+            return;
+        }
+
+        // ---- 4. 读取所有 cache 条目，组装为 JSON 行 ----
+        const cacheEntries = this.sqliteRepository.getAllTitleIndexCache();
+        if (cacheEntries.length === 0) {
+            return;
+        }
+
+        // 每条记录转为一行 JSON，最新的在最前面（cacheEntries 按 createdAt ASC，反转后最新在前）
+        const newLines = [...cacheEntries].reverse().map(entry =>
+            JSON.stringify({
+                title: entry.title,
+                hashOfTitle: entry.hashOfTitle,
+                remoteArticlePath: entry.remoteArticlePath,
+                createdAt: entry.createdAt,
+            })
+        ).join('\n');
+
+        // ---- 5. 从 GitHub 获取现有索引文件内容 ----
+        const fileUrl = `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${titleIndexFilePath}`;
+        let existingContent = '';
+        let fileSha: string | null = null;
+
+        const MAX_RETRIES = 3;
+
+        const getRes = await fetch(fileUrl, {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'User-Agent': 'Hono-Worker',
+            },
+        });
+
+        if (getRes.ok) {
+            const fileData = (await getRes.json()) as { sha: string; content: string };
+            fileSha = fileData.sha;
+            // GitHub 返回的 content 是 base64 编码且可能含换行符
+            existingContent = Buffer.from(fileData.content.replace(/\n/g, ''), 'base64').toString('utf-8');
+        }
+
+        // ---- 6. 将新条目 prepend 到文件最前面 ----
+        const mergedContent = existingContent
+            ? `${newLines}\n${existingContent}`
+            : newLines;
+
+        const base64Content = Buffer.from(mergedContent, 'utf-8').toString('base64');
+
+        // ---- 7. 推送到 GitHub（带重试） ----
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            // 重试时重新获取 SHA
+            if (attempt > 0) {
+                const retryGetRes = await fetch(fileUrl, {
+                    method: 'GET',
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'User-Agent': 'Hono-Worker',
+                    },
+                });
+                if (retryGetRes.ok) {
+                    const retryData = (await retryGetRes.json()) as { sha: string; content: string };
+                    if (retryData.sha !== fileSha) {
+                        // SHA 变了，说明文件在两次请求之间被其他 commit 修改过，
+                        // 需要基于最新内容重新合并，否则会覆盖掉别人的修改。
+                        fileSha = retryData.sha;
+                        const latestContent = Buffer.from(retryData.content.replace(/\n/g, ''), 'base64').toString('utf-8');
+                        const reMerged = latestContent
+                            ? `${newLines}\n${latestContent}`
+                            : newLines;
+                        var updatedBase64 = Buffer.from(reMerged, 'utf-8').toString('base64');
+                    } else {
+                        // SHA 没变，文件内容未被修改，沿用之前已合并好的内容即可
+                        fileSha = retryData.sha;
+                        var updatedBase64 = base64Content;
+                    }
+                } else {
+                    updatedBase64 = base64Content;
+                }
+            } else {
+                var updatedBase64 = base64Content;
+            }
+
+            const putRes = await fetch(fileUrl, {
+                method: 'PUT',
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    'User-Agent': 'Hono-Worker',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: `${commitMessage} - update title index`,
+                    content: updatedBase64,
+                    sha: fileSha || undefined,
+                }),
+            });
+
+            if (putRes.ok) {
+                break;
+            }
+
+            if (putRes.status === 409 && attempt < MAX_RETRIES - 1) {
+                console.warn(`SHA conflict (409) pushing title index on attempt ${attempt + 1}, retrying...`);
+                await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+                continue;
+            }
+
+            const errorText = await putRes.text();
+            throw new Error(`Failed to push title index to GitHub: ${errorText}`);
+        }
+
+        // ---- 8. 推送成功，清空 titleIndexCache ----
+        this.sqliteRepository.clearTitleIndexCache();
+        console.log(`Flushed ${cacheEntries.length} title index entries to GitHub: ${titleIndexFilePath}`);
     }
 
     // 2) 返回 Promise<Task>，不再直接构造 Response
