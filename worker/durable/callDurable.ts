@@ -51,21 +51,6 @@ export const durablePushToGitHub = async (c: Context,
     const doId = c.env.MY_DURABLE_OBJECT.idFromName(
         `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
     const stub = c.env.MY_DURABLE_OBJECT.get(doId)
-
-    // try {
-    //     const result = await stub.processGithubPushTask(taskId)
-    //     return result
-    // } catch (err) {
-    //     if (err instanceof ValidationError) {
-    //         return c.text(err.message, 400)
-    //     }
-    //     if (err instanceof NotFoundError) {
-    //         return c.text(err.message, 404)
-    //     }
-
-    //     console.error('Unexpected error in processGithubPush:', err)
-    //     return c.text('Internal Server Error', 500)
-    // }
     
     // 把耗时任务交给 DO，但不阻塞 HTTP 响应
     c.executionCtx.waitUntil(

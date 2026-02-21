@@ -51,3 +51,23 @@ export async function generateJWT(appId: string, privateKey: string) {
   const token = await sign(payload, privateKey, 'RS256')
   return token
 }
+
+export async function getTitleFromContent(content: string): Promise<string> {
+  // 使用正则表达式提取标题
+  let title = '';
+  
+  // 首先查找 #que 后面跟一个空格的行
+  const queMatch = content.match(/^\x20{0,2}#que(?:\x20)(.*)$/m);
+  if (queMatch && queMatch[1]) {
+      title = queMatch[1].trim();
+  } else {
+      // 如果没有找到 #que，查找第一个 “# “后面跟一个空格的行
+      const headerMatch = content.match(/^\x20{0,2}#(?:\x20)(.*)$/m);
+      if (headerMatch && headerMatch[1]) {
+          title = headerMatch[1].trim();
+      }
+  }
+  console.log("Extracted title: ", title)
+  console.log("Extracted content length: ", content?.length || 0)
+  return title ;
+}
