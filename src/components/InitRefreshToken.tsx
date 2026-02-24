@@ -16,7 +16,7 @@ export function InitRefreshToken() {
         try {
         await initRefreshToken()
         } finally {
-        // 无论成功与否，都立刻跳转
+        // Whether successful or not, jump immediately.
         navigate('/', { replace: true })
         }
     }

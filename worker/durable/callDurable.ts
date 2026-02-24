@@ -37,7 +37,7 @@ export const durableCreateTaskAndSaveArticleToDB = async (c: Context,
             return c.text(err.message, 400)
         }
         if (err instanceof NotFoundError) {
-            // 理论上创建任务不会遇到这个，但可保留容错
+            // Theoretically, creating tasks will not encounter this, but fault tolerance can be preserved.
             return c.text(err.message, 404)
         }
 
@@ -52,16 +52,16 @@ export const durablePushToGitHub = async (c: Context,
         `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
     const stub = c.env.MY_DURABLE_OBJECT.get(doId)
     
-    // 把耗时任务交给 DO，但不阻塞 HTTP 响应
+    // Offload time-consuming tasks to DO without blocking HTTP responses
     c.executionCtx.waitUntil(
         stub.processGithubPushTask(taskId)
         .catch((err: any) => {
-            // 注意：这里的错误不会再传到用户请求里了，只能自己记录
+            // Note: The errors here will no longer be passed to the user request and can only be recorded by yourself.
             console.error("Background DO task failed:", err);
         })
     );
 
-    // 用户立即得到响应，不等任务完成
+    // Users get an immediate response, without waiting for the task to complete
     return { status: "accepted", taskId };
 }
 

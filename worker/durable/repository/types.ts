@@ -1,5 +1,5 @@
 /**
- * SQLite 数据模型类型定义
+ * SQLite data model type definition
  */
 
 export interface TitleIndex {

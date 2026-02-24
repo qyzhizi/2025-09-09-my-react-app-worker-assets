@@ -4,7 +4,7 @@ import {
   text,
   primaryKey
 } from "drizzle-orm/sqlite-core";
-import { sql } from "drizzle-orm"; // 正确导入 sql
+import { sql } from "drizzle-orm"; // Import sql correctly
 
 
 export const users = sqliteTable("users", {

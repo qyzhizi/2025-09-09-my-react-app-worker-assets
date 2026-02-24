@@ -5,6 +5,6 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import './sw-register';
 
-// 渲染
+// rendering
 const root = createRoot(document.getElementById('root')!)
 root.render(<AppRouter />)

@@ -24,7 +24,7 @@ export const createOrUpdateUser = async (
 ): Promise<User> => {
   const db = drizzle(c.env.DB, { schema: tables });
 
-  // 1. 查找用户（按 email）
+  // 1. Find users (by email)
   const existingUser = await db.query.users.findFirst({
     where: (users, { eq }) => eq(users.email, email),
   });
@@ -46,7 +46,7 @@ export const createOrUpdateUser = async (
     return existingUser;
   }
 
-  // 2. 创建新用户
+  // 2. Create new user
   return await createUserWithAuth(
     db,
     {

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { navigate } from '@/Routers'; // 自定义导航函数
+import { navigate } from '@/Routers'; // Custom navigation function
 import { LogoutIcon } from "./Logout"; 
 import { LoginIcon, Avatar } from "./Login"; 
 
@@ -26,7 +26,7 @@ export const AuthButton = ({ avatarUrl, logout }: AuthButtonProps) => {
 
   return (
     <div className="relative">
-      {/* 触发按钮 */}
+      {/* trigger button */}
       <button
         onClick={avatarUrl && hover ? handleLogout : undefined}
         onMouseEnter={() => setHover(true)}

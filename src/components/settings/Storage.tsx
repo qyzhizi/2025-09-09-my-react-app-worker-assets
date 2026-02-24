@@ -12,7 +12,7 @@ const JianGuoYunSettings = () => (
   </div>
 );
 
-// 远程存储选择组件
+// Remote storage selection components
 type StorageType = 'github' | 'jianguoyun';
 
 function RemoteStorageSelector({ 
@@ -106,7 +106,7 @@ export default function StorageSettings({
   const [saving, setSaving] = useState(false);
   // const [error, setError] = useState<string | null>(null);
 
-  // 获取存储偏好
+  // Fetch storage preference
   useEffect(() => {
     const fetchStoragePreference = async () => {
       try {
@@ -126,7 +126,7 @@ export default function StorageSettings({
     fetchStoragePreference();
   }, []);
 
-  // 处理存储类型变更
+  // Handle storage type change
   const handleStorageChange = async (storageType: StorageType) => {
     try {
       setSaving(true);

@@ -24,7 +24,7 @@ interface testGitHubRepoAcessInfo{
 }
 
 /**
- * 类型守卫：判断值是否为 Date 类型
+ * Type guard: Determine whether the value is of Date type
  */
 // function isDate(value: unknown): value is Date {
 //   return value instanceof Date;
@@ -39,7 +39,7 @@ export async function getOrUpdategithubRepoAccessInfo(c: Context<{ Bindings: Env
   const accessTokenExpiresAt = gitHubAccessInfo?.accessTokenExpiresAt ?? null;
   const refreshTokenExpiresAt = gitHubAccessInfo?.refreshTokenExpiresAt ?? null;
   
-  // 获取当前时间
+  // Get current time
   const currentTime = Date.now(); // utc time
 
   // if access_token has expired
@@ -59,7 +59,7 @@ export async function getOrUpdategithubRepoAccessInfo(c: Context<{ Bindings: Env
         await addOrUpdategithubRepoAccessData(c, githubAppTokenInfo)
         console.log("addOrUpdategithubRepoAccessData: ", "success")
         
-        // 更新 gitHubAccessInfo 的 token 相关数据
+        // Update token related data of gitHubAccessInfo
         gitHubAccessInfo = {
           ...gitHubAccessInfo,
           accessToken: githubAppTokenInfo.accessToken,
@@ -68,7 +68,7 @@ export async function getOrUpdategithubRepoAccessInfo(c: Context<{ Bindings: Env
           refreshTokenExpiresAt: githubAppTokenInfo.refreshTokenExpiresAt
         };
       } catch (dbError) {
-        console.error('更新 GitHub App 访问数据时出错:', dbError)
+        console.error('Error updating GitHub App access data:', dbError)
         throw new DBError("fail to add or update github app access data ")
       }
     } else {
@@ -84,8 +84,8 @@ async function getGitHubAccessTokenByRefreshToken(c: Context<{ Bindings: Env, Va
   const token_url = 'https://github.com/login/oauth/access_token'
   const GITHUB_APP_CLIENT_ID = c.env.GITHUB_APP_CLIENT_ID;
   const CLIENT_SECRET = c.env.GITHUB_APP_CLIENT_SECRETS
-  
-  // 构建 URL-encoded payload
+
+  // Construct URL-encoded payload
   const params = new URLSearchParams()
   params.append('client_id', GITHUB_APP_CLIENT_ID)
   params.append('client_secret', CLIENT_SECRET)
@@ -135,9 +135,9 @@ export async function transformGitHubAppTokenInfo(
   const now = Date.now(); // utc time
   const githubAppTokenInfo: GitHubAppTokenInfo= {
     accessToken: originGithubAppTokenInfo.access_token,
-    accessTokenExpiresAt: new Date(now + originGithubAppTokenInfo.expires_in * 1000), // 8小时后过期,
+    accessTokenExpiresAt: new Date(now + originGithubAppTokenInfo.expires_in * 1000), // Expires in 8 hours
     refreshToken: originGithubAppTokenInfo.refresh_token,
-    refreshTokenExpiresAt: new Date(now + originGithubAppTokenInfo.refresh_token_expires_in * 1000) // 184天后过期
+    refreshTokenExpiresAt: new Date(now + originGithubAppTokenInfo.refresh_token_expires_in * 1000) // Expires in 184 days
   };  
   return githubAppTokenInfo
 }

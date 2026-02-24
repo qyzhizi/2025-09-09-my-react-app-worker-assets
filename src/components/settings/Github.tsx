@@ -30,12 +30,12 @@ export default function GithubSettings({
   const [githubRepoFullName, setGitHubRepoFullName] = useState('');
   const [vaultInfo, setVaultInfo] = useState<{ vaultName?: string }>({});
   const [vaultPathInRepo, setVaultPathInRepo] = useState('');
-  // true = 正在加载，false = 加载完成
+  // true = loading, false = loading completed
   const [loading, setLoading] = useState(true);
   const [repositories, setRepositories] = useState<Array<{id: number; name: string; full_name: string; html_url: string; description: string}>>([]);
   const [loadingRepos, setLoadingRepos] = useState(false);
 
-  // 拉取仓库列表
+  // Pull repo list
   const handleFetchInstallationRepos = async () => {
     try {
       setLoadingRepos(true);
@@ -53,7 +53,7 @@ export default function GithubSettings({
     }
   };
 
-  // 组件加载时自动获取当前repoName（不再自动拉取仓库列表）
+  // Automatically obtain the current repo name when the component is loaded (no longer automatically pull the repo list)
   useEffect(() => {
     const fetchGitHubRepoName = async () => {
       try {
@@ -74,7 +74,7 @@ export default function GithubSettings({
       }
     };
     fetchGitHubRepoName();
-  }, []); // 空依赖数组表示只在组件首次渲染时执行一次  
+  }, []); // Empty dependency array means this effect runs only once when the component mounts
 
   const handleSave = async () => {
     if (!githubRepoFullName.trim()) {
@@ -111,7 +111,7 @@ export default function GithubSettings({
         return;
       }
       
-      // 成功处理
+      // successfully processed
       if (res.ok) {
         alert(data.success || 'Repository saved and connection tested successfully!');
       }
@@ -194,7 +194,7 @@ export default function GithubSettings({
               console.log("Selected repo:", e.target.value);
             }}
             onMouseDown={e => {
-              // 只在点击 select 主体时触发
+              // Only triggered when the select body is clicked
               if (!loadingRepos && e.button === 0) {
                 setRepositories([]);
                 handleFetchInstallationRepos();
@@ -221,7 +221,7 @@ export default function GithubSettings({
             disabled={!githubRepoFullName}
             onClick={() => {
               navigator.clipboard.writeText(githubRepoFullName);
-              // 提示已复制
+              // Tip has been copied
               setSuccessMessage('Copied to clipboard: ' + githubRepoFullName)
               setTimeout(() => { setSuccessMessage(null); }, 3000);
             }}

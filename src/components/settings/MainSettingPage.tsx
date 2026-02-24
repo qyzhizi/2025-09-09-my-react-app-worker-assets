@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 
 import AccountSettings from './Account';
 import StorageSettings from './Storage';
-import styles from './MainSettingPage.module.css';  // 导入 CSS 模块
+import styles from './MainSettingPage.module.css';  // Import CSS module
 
-// 导航项配置
+// Navigation item configuration
 const navItems = [
   {
     id: 'account',
@@ -34,13 +34,13 @@ const navItems = [
   // }
 ];
 
-// 主组件
+// main component
 export default function MainSettingPage() {
   const [activeTab, setActiveTab] = useState('account');
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // 检测 URL 参数，处理 GitHub 授权回调
+  // Detect URL parameters and handle GitHub authorization callbacks
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const githubAuth = params.get('github_auth');
@@ -50,9 +50,9 @@ export default function MainSettingPage() {
       setActiveTab('storage');
       setSuccessMessage('GitHub 授权成功！');
       setErrorMessage(null);
-      // 清除 URL 参数，避免刷新时重复显示
+      // Clear URL parameters to avoid repeated display on refresh
       window.history.replaceState({}, '', '/settings-page');
-      // 3秒后自动清除成功消息
+      // Automatically clear success message after 3 seconds
       setTimeout(() => {
         setSuccessMessage(null);
       }, 5000);
@@ -60,9 +60,9 @@ export default function MainSettingPage() {
       setActiveTab('storage');
       setErrorMessage('GitHub 授权失败，请重试。');
       setSuccessMessage(null);
-      // 清除 URL 参数
+      // Clear URL parameters
       window.history.replaceState({}, '', '/settings-page');
-      // 5秒后自动清除错误消息
+      // Automatically clear error message after 5 seconds
       setTimeout(() => {
         setErrorMessage(null);
       }, 5000);
@@ -93,7 +93,7 @@ export default function MainSettingPage() {
     <div className="w-full h-full bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
       <div className={styles.settingsContainer}>
 
-        {/* 顶部导航（小屏） */}
+        {/* Top navigation (small screen) */}
         <div className={styles.navTop}>
           <nav className=" mb-4 bg-gray-100 dark:bg-gray-700 dark:text-white">
             <div className="flex overflow-x-auto">
@@ -119,7 +119,7 @@ export default function MainSettingPage() {
         </div>
 
         <div className="flex h-full">
-          {/* 左侧导航（大屏） */}
+          {/* Left navigation (large screen) */}
           <div className={styles.navSide}>
             <nav className="w-64 bg-gray-100 dark:bg-gray-800 dark:text-white h-full">
               <div className="p-6">
@@ -147,7 +147,7 @@ export default function MainSettingPage() {
             </nav>
           </div>
 
-          {/* 内容区域 */}
+          {/* content area */}
           <main className="py-5 flex-1 bg-gray-100 dark:bg-gray-800 content-area">
             {renderContent()}
           </main>

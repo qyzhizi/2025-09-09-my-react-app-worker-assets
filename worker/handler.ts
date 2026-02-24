@@ -37,14 +37,14 @@ const VALIDATION_TARGET = {
   PARAM: "param",
 } as const
 
-// schema 单独提取
+// schema definition for hello route query validation
 const helloQuerySchema = z.object({
   name: z.string(),
 })
 
 export const helloZValidator= zValidator(VALIDATION_TARGET.QUERY, helloQuerySchema)
 
-// 注册 GITHUB_LOGIN_PATH 的路由后续处理函数，处理 GitHub 登录成功后的逻辑，setCookie 设置 JWT token
+// Register the route handler for GITHUB_LOGIN_PATH to handle the logic after GitHub login success, setCookie to set JWT token
 export const GithubLoginHandler = async (c: Context) => {
 		const userData = c.get("user-github");
 		
@@ -83,7 +83,7 @@ export const GithubLoginHandler = async (c: Context) => {
 			sameSite: "Lax",
 		});
 
-    // 跳转到 init-refresh-token 路由，初始化 refresh token
+    // Redirect to init-refresh-token route to initialize refresh token
 		return c.redirect("/login-callback-init-refresh-token");
 };
 
@@ -115,16 +115,16 @@ export const initRefreshTokenHandler = async (
 };
 
 export const logoutHandler = async (c: Context) => {
-  // 删除 access_token
+  // Remove access_token
   setCookie(c, 'access_token', '', {
     path: '/',
     httpOnly: true,
     secure: true,
     sameSite: 'Lax',
-    maxAge: 0, // 关键：立即过期
+    maxAge: 0, // Key: expire immediately
   })
 
-  // 删除 refresh_token
+  // Remove refresh_token
   setCookie(c, 'refresh_token', '', {
     path: '/',
     httpOnly: true,
@@ -133,15 +133,15 @@ export const logoutHandler = async (c: Context) => {
     maxAge: 0,
   })
 
-  // 返回成功响应
+  // Return success response
   return c.json({ ok: true })
 }
 
-// 处理函数（这里让 TS 自动推断类型）
+// Processing function (let TS automatically infer the type here)
 export const helloHandler = (c: Parameters<typeof helloZValidator>[0]) => {
-  const { name } = c.req.valid(VALIDATION_TARGET.QUERY) // 自动推断为 string
+  const { name } = c.req.valid(VALIDATION_TARGET.QUERY) // automatically inferred as string
   return c.json({ message: `Hello ${name}!` })
-}
+};
 
 // getAuthInfoHandler
 export const getAuthInfoHandler = async (c: Context<{ 
@@ -157,17 +157,17 @@ export const getAuthInfoHandler = async (c: Context<{
 }
 
 /**
- * GitHub 授权回调路由处理函数
- * 该函数从请求中提取 code，然后调用 fetchAccessToken 获取 token，并重定向到前端设置页面
+ * GitHub authorization callback routing processing function
+ * This function extracts the code from the request, then calls fetchAccessToken to obtain the token, and redirects to the front-end settings page
  */
 export async function githubAppAuthCallbackHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // 从查询参数中获取 code
+  // Extract code from query parameters
   const code = c.req.query('code')
   if (!code) {
     return c.text('缺少 code 参数', 400)
   }
 
-  // 从环境变量中读取 Client ID 与 Client Secret（需要在 Workers 中绑定）
+  // Read Client ID and Client Secret from environment variables (must be bound in Workers)
   const CLIENT_ID = c.env.GITHUB_APP_CLIENT_ID
   const CLIENT_SECRET = c.env.GITHUB_APP_CLIENT_SECRETS
 
@@ -178,30 +178,30 @@ export async function githubAppAuthCallbackHandler(c: Context<{ Bindings: Env }>
     const filteredTokenData: Record<string, any> = {
       githubUserName: userInfo.login,
       accessToken: tokenData.access_token,
-      accessTokenExpiresAt: new Date(now + tokenData.expires_in * 1000), // 8小时后过期,
+      accessTokenExpiresAt: new Date(now + tokenData.expires_in * 1000), // Expires in 8 hours
       refreshToken: tokenData.refresh_token,
-      refreshTokenExpiresAt: new Date(now + tokenData.refresh_token_expires_in * 1000) // 184天后过期
+      refreshTokenExpiresAt: new Date(now + tokenData.refresh_token_expires_in * 1000) // Expires in 184 days
     };
-    // 尝试更新数据库中 GitHub App 相关数据
+    // Try to update GitHub App related data in the database
     try {
       await addOrUpdategithubRepoAccessData(c, filteredTokenData)
     } catch (dbError) {
-      console.error('更新 GitHub App 访问数据时出错:', dbError)
-      // 重定向到设置页面，但带上错误参数
+      console.error('Error updating GitHub App access data:', dbError)
+      // Redirect to settings page with error parameter
       return c.redirect('/settings-page?github_auth=error&tab=github')
     }
-    // 成功时重定向到设置页面，并带上成功参数和 tab 参数
+    // Redirect to settings page with success parameter and tab parameter
     return c.redirect('/settings-page?github_auth=success&tab=github')
   } catch (error) {
-    console.error('获取 access token 过程中出错:', error)
-    // 错误时也重定向到设置页面，但带上错误参数
+    console.error('Error occurred while fetching access token:', error)
+    // Redirect to settings page with error parameter
     return c.redirect('/settings-page?github_auth=error&tab=github')
   }
 }
 
-// 定义处理函数
+// Define handler function
 export const githubAuthHandler = (c: Context<{ Bindings: Env }>) => {
-  // 从环境变量中获取 GitHub Client ID
+  // Get GitHub Client ID from environment variables
   const clientId = c.env.GITHUB_APP_CLIENT_ID
   const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}`
   return c.redirect(githubAuthUrl)
@@ -221,7 +221,7 @@ export async function setGithubRepoHandler(c: Context<{ Bindings: Env }>): Promi
       return c.json({ error: 'Empty githubRepoName' }, 400);
     }
 
-    // 执行安全更新
+    // Perform safe update
     await safeUpdategithubRepoAccessByUserId(c, { githubRepoName });
 
     return c.json({ message: 'GitHub repo name updated successfully' }, 200);
@@ -291,7 +291,7 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!")
     }
 
-    // 先检查 githubAccessInfo 是否存在
+    // First check if githubAccessInfo exists
     if (!githubAccessInfo) {
       return c.json({ error: "GitHub app access record not found" }, 404);
     }
@@ -398,7 +398,7 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
       if (error instanceof ValidationError) {
         return c.json({ error: error.message }, 400);
       }
-      throw error; // 重新抛出非 ValidationError 的错误
+      throw error; 
     }
     const [githubUserName, githubRepoName] = githubRepoFullName.split("/");
 
@@ -485,7 +485,7 @@ export async function getGitHubAppInstallationReposHandler(c:Context<{Bindings: 
   }
   const githubAppId = c.env.GITHUB_APP_ID
   const rawPrivateKeyPem= c.env.GITHUB_APP_PRIVATE_PEM
-  // 将字符串转换为换行符
+  // Convert string to newline
   const privateKeyPem = rawPrivateKeyPem.replace(/\\n/g, '\n')
   const installationData = await getInstallationRepositories(
     installationId, githubAppId, privateKeyPem)

@@ -4,7 +4,7 @@ import { verifyOrRefreshAccessToken } from "./jwt";
 import { BASE_PATH, GITHUB_LOGIN_PATH } from "../../ConstVar";
 
 const PUBLIC_PATHS = [
-	GITHUB_LOGIN_PATH, // GitHub OAuth 回调
+	GITHUB_LOGIN_PATH, // GitHub OAuth callback
 ];
 
 const isPublicPath = (path: string) =>
@@ -22,7 +22,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
 		return c.text("Unauthorized", 401);
 	}
 
-	// 注入上下文
+	// Inject context
 	c.set("userId", payload.sub);
 	c.set("userName", payload.name);
 

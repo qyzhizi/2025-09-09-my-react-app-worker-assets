@@ -1,4 +1,4 @@
-// 移动端顶部栏组件
+// Mobile top bar component
 export const MobileTopBar = ({ onMenuClick }: { onMenuClick: () => void }) => {
   return (
     <div className="md:hidden sticky top-0 z-30 w-full h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 shadow-sm">

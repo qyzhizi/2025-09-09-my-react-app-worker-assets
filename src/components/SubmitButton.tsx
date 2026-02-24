@@ -1,7 +1,7 @@
 import React from 'react';
 
 interface SubmitButtonProps {
-  /** onClick 不接收事件对象，直接回调 */
+  /** onClick does not receive the event object and calls back directly */
   onClick: () => void;
 }
 
@@ -16,7 +16,7 @@ const SubmitButton : React.FC<SubmitButtonProps>  = ({ onClick }) => {
           type="button"
           onClick={onClick}
         >
-          保存
+          Save
           <span className="flex flex-row">
             <svg
               xmlns="http://www.w3.org/2000/svg"

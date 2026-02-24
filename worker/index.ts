@@ -75,9 +75,9 @@ app.get('/github-app-setup', githubAppSetupHandler)
 app.get('/get-githubapp-installation-repositories', getGitHubAppInstallationReposHandler)
 app.get('/do-database-status', getDODatabaseStatusHandler)
 app.get('/reset-durable-object', resetDoKeyStorageAndSqliteHandler)
-// 独立导出 scheduled 方法
+// Export scheduled method independently
 export default {
-  fetch: app.fetch,  // 将 app.fetch 作为 fetch 函数导出
+  fetch: app.fetch,  // Export app.fetch as fetch function
 } satisfies ExportedHandler<Env>;
 
 export { MyDurableObject } from './durable/DurableController'

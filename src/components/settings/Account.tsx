@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiFetch } from '@/common';
 
-// 用户信息组件
+// User information component
 type UserInfo = {
   id?: string;
   name: string;

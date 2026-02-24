@@ -3,7 +3,7 @@ import {AuthButton} from "@/components/AuthButton"
 import {apiFetch} from "@/common";
 import { logout } from "@/components/Logout";
 
-// 左侧导航栏组件
+// Left navigation bar component
 export const Header = ({ 
   isOpen, 
   onClose, 
@@ -47,7 +47,7 @@ export const Header = ({
 
   return (
     <>
-      {/* 移动端遮罩层 */}
+      {/* Mobile mask layer */}
       {isOpen && (
         <div 
           className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
@@ -55,7 +55,7 @@ export const Header = ({
         />
       )}
       
-      {/* 侧边栏 */}
+      {/* sidebar */}
       <div 
         ref={headerRef}
         className={`
@@ -71,11 +71,11 @@ export const Header = ({
           ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}
       >
-        {/* 顶部区域 */}
+        {/* top area */}
         <div className="p-4 flex justify-between items-center border-b dark:border-gray-700">
           <AuthButton avatarUrl={userAvatarUrl} logout={logout} />
           {/* <span className="text-xl font-semibold">Menu</span> */}
-          {/* 移动端关闭按钮 */}
+          {/* Mobile close button */}
           <button
             className="md:hidden p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
             onClick={onClose}
@@ -87,7 +87,7 @@ export const Header = ({
           </button>
         </div>
         
-        {/* 导航内容 */}
+        {/* Navigation content */}
         <nav className="flex flex-col space-y-2 text-lg">
           <a className="px-6 py-3 flex items-center hover:bg-gray-200 dark:hover:bg-gray-700" href="/" aria-current="page">
             <svg className="h-5 w-5 mr-2 fill-current text-gray-900 dark:text-white" xmlns="http://www.w3.org/2000/svg" height="20" width="22.5" viewBox="0 0 576 512">

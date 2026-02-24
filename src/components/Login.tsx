@@ -7,7 +7,7 @@ export function Login() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await apiFetch('/api/hello?name=Pages') // 请求同站Worker接口
+        const res = await apiFetch('/api/hello?name=Pages') // Request same-site Worker interface
         if (!res.ok) {
           console.error('Request failed:', res.status)
           return

@@ -7,7 +7,7 @@ import { routes } from '@/Routers'
 export const AppRouter: FC = () => {
   const [path, setPath] = useState(window.location.pathname)
 
-  // 监听地址变化
+  // Listen for address changes
   useEffect(() => {
     const onPopState = () => setPath(window.location.pathname)
     window.addEventListener('popstate', onPopState)

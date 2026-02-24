@@ -15,22 +15,22 @@ function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProps) {
     setError('');
     
     if (!newPassword.trim()) {
-      setError('请输入新密码');
+      setError('please enter a new password');
       return;
     }
     
     if (!confirmPassword.trim()) {
-      setError('请确认新密码');
+      setError('please confirm the new password');
       return;
     }
-    
+
     if (newPassword !== confirmPassword) {
-      setError('两次输入的密码不一致');
+      setError('the two passwords do not match');
       return;
     }
     
     if (newPassword.length < 6) {
-      setError('密码至少需要6个字符');
+      setError('the password must be at least 6 characters long');
       return;
     }
 
@@ -38,12 +38,12 @@ function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProps) {
     try {
       // Simulated API call
       await new Promise(resolve => setTimeout(resolve, 1000));
-      alert('密码修改成功!');
+      alert('Password changed successfully!');
       setNewPassword('');
       setConfirmPassword('');
       onClose();
     } catch (err) {
-      setError('密码修改失败，请重试');
+      setError('Failed to change password, please try again');
     } finally {
       setLoading(false);
     }
@@ -53,7 +53,7 @@ function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProps) {
 
   return (
     <>
-        {/* 背景蒙版 */}
+        {/* Background overlay */}
         <div
         className="fixed inset-0 bg-black bg-opacity-50 z-40 transition-opacity duration-200"
         onClick={onClose}
@@ -62,7 +62,7 @@ function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProps) {
         <div className="bg-gray-900 rounded-lg shadow-xl w-96 max-w-full mx-4">
             {/* Header */}
             <div className="flex justify-between items-center p-2 border-b border-gray-700">
-            <h2 className="text-xl font-semibold text-white">修改密码</h2>
+            <h2 className="text-xl font-semibold text-white">Change Password</h2>
             <button
                 onClick={onClose}
                 className="text-gray-400 hover:text-white transition-colors"
@@ -79,13 +79,13 @@ function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProps) {
             {/* New Password */}
             <div className="mb-2">
                 <label className="block text-gray-300 text-sm font-medium mb-2">
-                新密码
+                New Password
                 </label>
                 <input
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="请输入新密码"
+                placeholder="Enter new password"
                 className="w-full bg-gray-800 text-white border border-gray-700 rounded px-4 py-3 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                 />
             </div>
@@ -93,13 +93,13 @@ function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProps) {
             {/* Confirm Password */}
             <div className="mb-2">
                 <label className="block text-gray-300 text-sm font-medium mb-2">
-                重复新密码
+                Confirm New Password
                 </label>
                 <input
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="请再次输入新密码"
+                placeholder="Please re-enter new password"
                 className="w-full bg-gray-800 text-white border border-gray-700 rounded px-4 py-3 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                 />
             </div>
@@ -118,14 +118,14 @@ function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProps) {
                 onClick={onClose}
                 className="flex-1 px-4 py-2.5 border border-gray-600 text-gray-300 rounded hover:bg-gray-800 transition-colors font-medium"
             >
-                取消
+                Cancel
             </button>
             <button
                 onClick={handleSave}
                 disabled={loading}
                 className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-                {loading ? '保存中...' : '保存'}
+                {loading ? 'Saving...' : 'Save'}
             </button>
             </div>
         </div>

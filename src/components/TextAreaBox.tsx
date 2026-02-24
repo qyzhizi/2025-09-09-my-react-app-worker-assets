@@ -9,12 +9,12 @@ const TextAreaBox = ({
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 自动调整高度
+  // Automatically adjust height
   useEffect(() => {
     const textarea = textareaRef.current;
     if (textarea) {
-      textarea.style.height = 'auto'; // 重置高度，防止高度增高后不能变小
-      textarea.style.height = `${textarea.scrollHeight}px`; // 设置为内容高度
+      textarea.style.height = 'auto'; // Reset height to prevent it from growing too tall
+      textarea.style.height = `${textarea.scrollHeight}px`; // Set height to content height
     }
   }, [value]);
 

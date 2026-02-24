@@ -1,5 +1,5 @@
 /**
- * 仓储层统一导出
+ * Unified export at the warehousing layer
  */
 
 export { SqliteRepository } from "./SqliteRepository";

@@ -1,5 +1,5 @@
 import ProfileUpdateForm from './UserInfoDialog';
-// 编辑账户的模态框组件
+// Edit account modal component
 type EditAccountModalProps = {
   isOpen: boolean;
   onClose: () => void;
@@ -10,16 +10,16 @@ export function EditAccountModal({ isOpen, onClose }: EditAccountModalProps) {
 
   return (
     <>
-      {/* 背景蒙版 */}
+      {/* background mask */}
       <div
         className="fixed inset-0 bg-black bg-opacity-50 z-40 transition-opacity duration-200"
         onClick={onClose}
       ></div>
       
-      {/* 模态框 */}
+      {/* modal box */}
       <div className="fixed top-16 left-1/2 transform -translate-x-1/2 z-50 p-4">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-96 transform transition-all duration-200">
-          {/* 标题栏 */}
+          {/* title bar */}
           <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Edit Account</h2>
             <button
@@ -33,10 +33,10 @@ export function EditAccountModal({ isOpen, onClose }: EditAccountModalProps) {
             </button>
           </div>
 
-          {/* 内容 */}
+          {/* content */}
           <ProfileUpdateForm />
 
-          {/* 底部按钮 */}
+          {/* bottom button */}
           <div className="flex gap-3 p-2 border-t border-gray-200 dark:border-gray-700">
             <button
               onClick={onClose}

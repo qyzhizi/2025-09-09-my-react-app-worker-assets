@@ -2,7 +2,7 @@ import { useState, useRef } from "react";
 import { Header } from "@/components/Header";
 import { MobileTopBar } from "@/components/MobileTopBar";
 
-// App 布局组件
+// App layout components
 export const App = ({ children }: { children: any }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);

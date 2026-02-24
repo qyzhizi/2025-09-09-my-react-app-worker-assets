@@ -68,6 +68,6 @@ export function navigate(path: string, options: NavigateOptions = {}) {
     window.history.pushState({}, '', path)
   }
 
-  // 通知你的 AppRouter 更新
+  // Notify your AppRouter of updates
   window.dispatchEvent(new PopStateEvent('popstate'))
 }

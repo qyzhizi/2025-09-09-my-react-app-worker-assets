@@ -64,7 +64,7 @@ const LogList = ({ refreshFlag }: LogListProps) => {
   if (error) {
     return (
       <div className="w-full text-center py-8 text-red-500 dark:text-red-400 text-sm">
-        加载失败: {error}
+        Loading failed: {error}
       </div>
     );
   }
@@ -72,7 +72,7 @@ const LogList = ({ refreshFlag }: LogListProps) => {
   if (logs.length === 0) {
     return (
       <div className="w-full text-center py-8 text-gray-400 dark:text-gray-500 text-sm">
-        暂无日志
+        No logs available
       </div>
     );
   }

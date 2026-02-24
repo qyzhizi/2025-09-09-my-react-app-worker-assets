@@ -905,8 +905,8 @@ export class SqliteRepository {
     // ===================== kvMeta key-value storage =====================
 
     /**
-     * 获取 kvMeta 中的值
-     * @returns 值字符串，不存在返回 null
+     * Get the value in kvMeta
+     * @returns Value string, returns null if it does not exist
      */
     getKvMeta(key: string): string | null {
         const result = this.sql.exec(
@@ -918,8 +918,8 @@ export class SqliteRepository {
     }
 
     /**
-     * 获取 kvMeta 中的数字值
-     * @returns 数字，不存在返回 null
+     * Get the numeric value in kvMeta
+     * @returns Number, returns null if it does not exist
      */
     getKvMetaNumber(key: string): number | null {
         const raw = this.getKvMeta(key);
@@ -929,7 +929,7 @@ export class SqliteRepository {
     }
 
     /**
-     * 设置 kvMeta 中的值（upsert）
+     * Set the value in kvMeta (upsert)
      */
     setKvMeta(key: string, value: string | number | boolean): void {
         this.sql.exec(
@@ -942,14 +942,14 @@ export class SqliteRepository {
     }
 
     /**
-     * 删除 kvMeta 中的某个键
+     * Delete a key in kvMeta
      */
     deleteKvMeta(key: string): void {
         this.sql.exec(`DELETE FROM kvMeta WHERE key = ?`, key);
     }
 
     /**
-     * 获取 kvMeta 中所有键值对（调试用）
+     * Get all key-value pairs in kvMeta (for debugging)
      */
     getAllKvMeta(): Array<{ key: string; value: string; updatedAt: string }> {
         const result = this.sql.exec(`SELECT key, value, updatedAt FROM kvMeta ORDER BY key`);

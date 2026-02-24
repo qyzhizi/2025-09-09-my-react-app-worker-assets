@@ -10,7 +10,7 @@ export default function LocalStoreApp() {
   const handleSubmit = async () => {
     if (!text.trim()) return;
     await saveSubmission(text);
-    alert(navigator.onLine ? '在线提交成功' : '离线保存成功');
+    alert(navigator.onLine ? 'Online submission successful' : 'Offline save successful');
     setText('');
   };
 
@@ -26,15 +26,15 @@ export default function LocalStoreApp() {
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="输入内容（支持离线）"
+        placeholder="Enter content (supports offline)"
         rows={4}
         style={{ width: '100%' }}
       />
 
       <div style={{ marginTop: 10 }}>
-        <button onClick={handleSubmit}>提交</button>
+        <button onClick={handleSubmit}>Submit</button>
         <button onClick={handleLoad} style={{ marginLeft: 10 }}>
-          读取本地数据
+          Load local data
         </button>
       </div>
 

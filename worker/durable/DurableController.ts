@@ -6,7 +6,7 @@ import { SqliteRepository } from "@/durable/repository";
 const MAX_FILES_PER_FOLDER = 1000;
 const MAX_ARTICLES_TO_STORE = 1000;
 const MAX_SINGLE_FILE_TITLE_INDEX = 1000;
-/** titleIndexCache 积攒到此数量后，批量 flush 到 GitHub 索引文件 */
+/** After the titleIndexCache accumulates to this quantity, it will be flushed in bulk to the GitHub index file. */
 const TITLE_INDEX_CACHE_FLUSH_THRESHOLD = 10;
 
 interface FileLocationResult {
@@ -28,9 +28,9 @@ export class MyDurableObject extends DurableObject<Env> {
     private sql: any;
     private sqliteRepository: SqliteRepository;
     /**
-     * GitHub 推送串行化锁。
-     * Contents API 在同一 branch 上并发提交会导致 409（Git HEAD 竞态），
-     * 通过 Promise 链保证同一时刻只有一个推送在执行。
+     * GitHub push serialization lock.
+     * Contents API concurrent commits on the same branch will result in 409 (Git HEAD race condition),
+     * The Promise chain ensures that only one push is executed at the same time.
      */
     private githubPushQueue: Promise<any> = Promise.resolve();
     /**
@@ -48,18 +48,18 @@ export class MyDurableObject extends DurableObject<Env> {
         this.sqliteRepository = new SqliteRepository(this.sql, MAX_ARTICLES_TO_STORE);
         this.sqliteRepository.initializeTables();
 
-        // 使用 blockConcurrencyWhile 确保初始化在处理任何 RPC 请求之前完成，
-        // 避免 DO 被驱逐后重建时，索引被重置或读取到未初始化的状态。
+        // Use blockConcurrencyWhile to ensure that initialization completes before processing any RPC requests,
+        // Prevent the index from being reset or read to an uninitialized state when rebuilding after DO eviction.
         ctx.blockConcurrencyWhile(async () => {
             await this.initialize(false);
         });
     }
 
     async initialize(forceInit: boolean = false) {
-        // 从 SQLite kvMeta 表中读取初始化标记（持久化，不会因 DO 驱逐而丢失）
+        // Read initialization token from SQLite kvMeta table (persistent, not lost by DO eviction)
         const stored = this.sqliteRepository.getKvMeta("initialized");
         if (stored !== 'true' || forceInit) {
-          // 首次初始化：设置文件索引起始值
+          // First initialization: Set the file index starting value
           console.log("Durable Object initializing storage (writing to SQLite kvMeta)...");
           this.sqliteRepository.setKvMeta("initialized", "true");
           this.sqliteRepository.setKvMeta("folderIndexInVault", 0);
@@ -69,7 +69,7 @@ export class MyDurableObject extends DurableObject<Env> {
           this.sqliteRepository.setKvMeta("currentTitleIndexCount", 0);
           this.sqliteRepository.setKvMeta("indexOfTitleIndexFiles", -1);
         } else {
-          // DO 被驱逐后重建：从 SQLite 读取（SQLite 是持久化的，不会丢失）
+          // DO rebuild after eviction: read from SQLite (SQLite is persistent and will not be lost)
           const folderIndex = this.sqliteRepository.getKvMetaNumber("folderIndexInVault");
           const fileIndex = this.sqliteRepository.getKvMetaNumber("fileIndexInFolder");
           const indexOfTitleIndexFiles = this.sqliteRepository.getKvMetaNumber("indexOfTitleIndexFiles");
@@ -95,7 +95,7 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     private isTaskPayload(data: any): data is Partial<Task> {
-        // 你的校验逻辑，比如检查 commitMessage/content 类型
+        // Your verification logic, such as checking the commitMessage/content type
         return (
           typeof data === 'object' &&
           (data.id === undefined || typeof data.id === 'string') &&
@@ -190,7 +190,7 @@ export class MyDurableObject extends DurableObject<Env> {
             .replace(/\/+/g, '/')
             .replace(/^\/|\/$/g, '');
         const placeholderFilePath = `${normalizedFolderPath}/.gitkeep`;
-        // 判断文件是否存在
+        // Determine whether the file exists
         const fileExists = await this.checkFileExistsInRepo(accessToken, githubUserName, repoName, placeholderFilePath);
         if (fileExists) {
             console.log("File already exists, skipping creation.");
@@ -201,7 +201,7 @@ export class MyDurableObject extends DurableObject<Env> {
 
         const MAX_RETRIES = 3;
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            // 如果是重试，重新检查文件是否已被其他并发请求创建
+            // If it is a retry, recheck whether the file has been created by other concurrent requests.
             const res = await fetch(
                 `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${placeholderFilePath}`,
                 {
@@ -218,19 +218,19 @@ export class MyDurableObject extends DurableObject<Env> {
                 }
             );
 
-            // 201 = created, 200 = updated（幂等）
+            // 201 = created, 200 = updated（Idempotent）
             if (res.ok || res.status === 200) {
                 return;
             }
 
-            // 409 冲突：可能有并发请求正在操作同一文件
+            // 409 Conflict: There may be concurrent requests operating on the same file
             if (res.status === 409 && attempt < MAX_RETRIES - 1) {
                 console.warn(`SHA conflict (409) creating folder on attempt ${attempt + 1}, retrying...`);
                 await new Promise(r => setTimeout(r, 50 * Math.pow(2, attempt)));
                 continue;
             }
 
-            // 422 表示文件已存在（竞态创建）
+            // 422 means the file already exists (race creation)
             if (res.status === 422) {
                 console.log("File already exists (422), skipping.");
                 return;
@@ -240,7 +240,7 @@ export class MyDurableObject extends DurableObject<Env> {
             console.log("Failed to create folder:", errorText);
             // throw new Error(errorText);
         }
-        // 如果重试耗尽仍失败，可以选择抛出错误或记录日志后继续（根据业务需求）
+        // If the retries still fail, you can choose to throw an error or log and continue (based on business needs)
         console.error("Failed to create folder after multiple attempts.");
         // throw new Error("Failed to create folder after multiple attempts.");
         throw new Error("Failed to create folder after multiple attempts.");
@@ -278,19 +278,19 @@ export class MyDurableObject extends DurableObject<Env> {
                 }
             );
 
-            // 201 = created, 200 = updated（幂等）
+            // 201 = created, 200 = updated（Idempotent）
             if (res.ok) {
                 return;
             }
 
-            // 409 冲突：可能有并发请求正在操作同一分支
+            // 409 confict can occur even if the file doesn't exist yet, because GitHub checks the branch's HEAD commit SHA for every update, and concurrent updates can cause SHA mismatches. Therefore, we should retry on 409 regardless of whether we think the file exists or not.
             if (res.status === 409 && attempt < MAX_RETRIES - 1) {
                 console.warn(`SHA conflict (409) creating file on attempt ${attempt + 1}, retrying...`);
                 await new Promise(r => setTimeout(r, 50 * Math.pow(2, attempt)));
                 continue;
             }
 
-            // 422 表示文件已存在（竞态创建）
+            // 422 means the file already exists (race creation)
             if (res.status === 422) {
                 console.log("File already exists (422), skipping.");
                 return;
@@ -308,8 +308,8 @@ export class MyDurableObject extends DurableObject<Env> {
         vaultName: string;
         folderIndex: number;
         fileIndex: number;
-        currentTitleIndexCount: number; // 当前标题索引数量，用于判断是否需要切换到新文件存储标题索引
-        indexOfTitleIndexFiles: number; // 当前用于存储标题索引的文件编号
+        currentTitleIndexCount: number; // The current number of title indexes, used to determine whether it is necessary to switch to a new file to store title indexes
+        indexOfTitleIndexFiles: number; // The file number currently used to store the title index
         maxFilesPerFolder: number;
         maxSingleFileTitleIndex: number;
     }): Promise<FileLocationResult> {
@@ -332,24 +332,24 @@ export class MyDurableObject extends DurableObject<Env> {
         let needCreateIndexFile = false;
         let nextCurrentTitleIndexCount = currentTitleIndexCount + 1;
 
-        // 首次初始化（fileIndex = -1 代表还没写过文件）
+        // First initialization (fileIndex = -1 means the file has not been written yet)
         if (folderIndex === 0 && fileIndex === -1) {
             needCreateFolder = true;
             nextFileIndex = 0;
         }
 
-        // 文件数超限，进入新 folder
+        // The number of files exceeds the limit, enter a new folder
         if (nextFileIndex >= maxFilesPerFolder) {
             nextFileIndex = 0;
             nextFolderIndex++;
             needCreateFolder = true;
         }
 
-        // 标题索引数超限，进入新文件
+        // The number of title indexes exceeds the limit, enter a new file
         if (currentTitleIndexCount % maxSingleFileTitleIndex === 0) {
             needCreateIndexFile = true;
             nextIndexOfTitleIndexFiles = (indexOfTitleIndexFiles ?? -1) + 1;
-            nextCurrentTitleIndexCount = 0; // 重置当前标题索引计数，开始计数新文件的标题索引数量
+            nextCurrentTitleIndexCount = 0; // Reset the current title index count and start counting the number of title indexes for new files
         }
 
         const folderPath = getFolderPath(vaultPathInRepo, vaultName, nextFolderIndex);
@@ -400,8 +400,8 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     /**
-     * 原子地分配下一个文件位置索引，并立即写回 SQLite kvMeta。
-     * SQLite 操作是同步的，保证不会被其他并发请求插入，从而避免索引竞态。
+     * Atomically allocate the next file position index and immediately write it back to the SQLite kvMeta.
+     * SQLite operations are synchronous, ensuring that no other concurrent requests can insert, thus avoiding index races.
      */
     private async allocateNextFileLocation(params: {
         vaultPathInRepo: string;
@@ -435,9 +435,11 @@ export class MyDurableObject extends DurableObject<Env> {
             maxSingleFileTitleIndex: MAX_SINGLE_FILE_TITLE_INDEX,
         });
 
-        // 立即将新索引写回 SQLite kvMeta（同步操作，不会让出执行权），
-        // 这样即使后续 await fetch 让出执行权，其他并发请求读到的也是已更新的索引。
-        // 代价：如果后续 GitHub push 失败，这个文件编号会被"跳过"，但这是无害的。
+        /**
+         * Immediately write the new index back to SQLite kvMeta (synchronous operation, will not yield execution),
+         * This way, even if subsequent await fetch yields execution, other concurrent requests will read the updated index.
+         * Cost: If subsequent GitHub push fails, this file number will be "skipped", but this is harmless.
+         */
         this.sqliteRepository.setKvMeta("folderIndexInVault", result.folderIndex);
         this.sqliteRepository.setKvMeta("fileIndexInFolder", result.fileIndex);
 
@@ -450,14 +452,15 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     async processGithubPushTask(taskId: string): Promise<PushGitRepoTaskRespon> {
-        // 通过 Promise 链串行化所有 GitHub 推送，避免同一 branch 上的并发提交导致 409。
-        // 原理：GitHub Contents API 每次 PUT 都会创建一个新 commit，
-        // 如果两个 PUT 并发基于同一个 HEAD commit，后提交的那个就会 409。
-        // 即使写的是不同文件也会冲突，因为冲突发生在 Git branch 级别，不是文件级别。
+        /** Use Promise chain to serialize all GitHub pushes, avoiding concurrent submissions on the same branch leading to 409.
+         * Principle: GitHub Contents API creates a new commit for each PUT,
+         * If two PUTs are concurrently based on the same HEAD commit, the later one will result in 409.
+         * Even if different files are written, conflicts can still occur because conflicts happen at the Git branch level, not the file level.
+         */
         const promise = this.githubPushQueue.then(() =>
             this._doProcessGithubPushTask(taskId)
         );
-        // 无论成功失败，都更新队列尾部（用 catch 防止链断裂）
+        //Regardless of success or failure, update the end of the queue (use catch to prevent chain breaks)
         this.githubPushQueue = promise.catch(() => {});
         return promise;
     }
@@ -474,16 +477,17 @@ export class MyDurableObject extends DurableObject<Env> {
             return { "taskId": taskId, "completed": true };
         }
 
-        // ====== 第一步：分配文件索引 ======
+        // ====== Step 1: Assign file index ======
         const result: FileLocationResult = await this.allocateNextFileLocation({
             vaultPathInRepo,
             vaultName,
         });
         console.log("Determined file location:", result);
 
-        // ====== 第二步：执行 GitHub 网络操作（已通过 githubPushQueue 串行化，不会并发冲突） ======
-        // 文件夹创建和索引文件创建写的是不同文件，可并发执行；
-        // 若两者同时触发可能产生 409，但各自内部已有重试逻辑可兜底。
+        // ====== Step 2: Perform GitHub network operations (serialized through githubPushQueue, no concurrency conflicts) ======
+        /** Folder creation and index file creation write different files and can be executed concurrently;
+         * If both are triggered at the same time, a 409 may be generated, but each has internal retry logic to cover the issue.
+         */
         const initTasks: Promise<void>[] = [];
         if (result.needCreateFolder) {
             initTasks.push(
@@ -519,9 +523,11 @@ export class MyDurableObject extends DurableObject<Env> {
             taskId,
         });
 
-        // 先发送到 titleIndexCache, titleIndex, 如果 titleIndexCache 满足一定数量就将 titleIndexCache 内容追加到 GitHub titleIndexFilePath 文件页面最前面，保证索引文件内容是最新的
-        // title 不能为空字符串，否则会导致哈希计算出错，进而无法正确生成索引和远程路径
-        // title 如果为空 or  ''，跳过索引更新，但仍然推送内容文件到 GitHub，保证文章内容不会因为索引问题而丢失
+        /**
+         * First sent to titleIndexCache, titleIndex. If titleIndexCache meets a certain number, the titleIndexCache content will be appended to the front of the GitHub titleIndexFilePath file page to ensure that the index file content is up to date.
+         * title cannot be an empty string, otherwise it will cause hash calculation errors, and the index and remote path will not be correctly generated.
+         * If title is empty or '', the index update will be skipped, but the content file will still be pushed to GitHub to ensure that the article content will not be lost due to indexing issues.
+         */
         if (title) {
             await this.pushTitleIndexCacheToGitHub({
                 accessToken,
@@ -533,13 +539,13 @@ export class MyDurableObject extends DurableObject<Env> {
             });
         }
 
-        // 删除已处理的任务
+        // Delete a processed task
         await this.deleteTask(taskId);
         return { "taskId": taskId, "completed": true };
     }
 
     /**
-     * 将文件内容推送到 GitHub 仓库（创建或更新），内置重试机制处理 409 冲突。
+     * Push file contents to GitHub repository (create or update) with built-in retry mechanism to handle 409 conflicts.
      */
     private async pushFileToGitHub(params: {
         accessToken: string;
@@ -557,7 +563,7 @@ export class MyDurableObject extends DurableObject<Env> {
         const MAX_RETRIES = 3;
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
-                // 每次重试都重新获取最新 SHA，避免并发导致的 SHA 过期
+                // Re-obtain the latest SHA with each retry to avoid SHA expiration caused by concurrency
                 let fileSha: string | null = null;
                 const fileRes = await fetch(fileUrl, {
                     method: 'GET',
@@ -572,7 +578,7 @@ export class MyDurableObject extends DurableObject<Env> {
                     fileSha = fileData.sha;
                 }
 
-                // 提交到 GitHub（创建或更新）
+                // Submit to GitHub (create or update)
                 const githubRes = await fetch(fileUrl, {
                     method: 'PUT',
                     headers: {
@@ -588,17 +594,17 @@ export class MyDurableObject extends DurableObject<Env> {
                 });
 
                 if (githubRes.ok) {
-                    break; // 成功，跳出重试循环
+                    break; // Success, exit retry loop
                 }
 
-                // 409 冲突：SHA 过期，可以重试
+                // 409 Conflict: SHA expired, can retry
                 if (githubRes.status === 409 && attempt < MAX_RETRIES - 1) {
                     console.warn(`SHA conflict (409) on attempt ${attempt + 1}, retrying...`, "taskId:", taskId);
                     await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
                     continue;
                 }
 
-                // 其他错误或重试次数已耗尽
+                // Other errors or retry attempts exhausted
                 throw new Error(await githubRes.text());
             } catch (error) {
                 if (attempt < MAX_RETRIES - 1 && error instanceof Error && error.message.includes('409')) {
@@ -606,20 +612,20 @@ export class MyDurableObject extends DurableObject<Env> {
                     await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
                     continue;
                 }
-                console.error('任务处理失败:', error, "taskId: ", taskId);
+                console.error('Task processing failed:', error, "taskId: ", taskId);
                 throw new Error(`Failed to process GitHub push: ${error}`);
             }
         }
     }
 
     /**
-     * 将当前 title 写入 titleIndex（本地 LRU）和 titleIndexCache（待推送缓冲），
-     * 当 titleIndexCache 条数达到 TITLE_INDEX_CACHE_FLUSH_THRESHOLD 时，
-     * 将缓冲内容批量 prepend 到 GitHub 上的 titleIndexFilePath 文件，
-     * 然后清空 titleIndexCache。
+     * Write the current title into titleIndex (local LRU) and titleIndexCache (buffer to be pushed),
+     * When the number of titleIndexCache reaches TITLE_INDEX_CACHE_FLUSH_THRESHOLD,
+     * Batch prepend the buffered content to the titleIndexFilePath file on GitHub,
+     * Then clear the titleIndexCache.
      *
-     * 这样可以把多条标题索引合并成一次 GitHub commit，减少 API 调用频率，
-     * 同时保证索引文件中最新的条目出现在文件最前面。
+     * In this way, multiple title indexes can be merged into one GitHub commit, reducing the frequency of API calls.
+     * Also ensure that the latest entry in the index file appears at the front of the file.
      */
     private async pushTitleIndexCacheToGitHub(params: {
         accessToken: string;
@@ -631,41 +637,41 @@ export class MyDurableObject extends DurableObject<Env> {
     }): Promise<void> {
         const { accessToken, githubUserName, repoName, titleIndexFilePath, commitMessage, title } = params;
 
-        // ---- 1. 计算 title 的哈希 & 生成远程文章路径 ----
+        // ---- 1. Calculate the hash of the title & generate the remote article path ----
         const encoder = new TextEncoder();
         const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(title));
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         const hashOfTitle = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-        // remoteArticlePath 使用当前 titleIndexFilePath 所在目录；
-        // 这里存储的是文件实际推送路径，由 allocateNextFileLocation 决定
+        // remoteArticlePath uses the directory where the current titleIndexFilePath is located;
+        // This stores the actual file push path, determined by allocateNextFileLocation
         const remoteArticlePath = titleIndexFilePath;
 
-        // ---- 2. 同时写入 titleIndex（本地 LRU）和 titleIndexCache（待推送缓冲） ----
+        // ---- 2. Write to titleIndex (local LRU) and titleIndexCache (buffer to be pushed) ----
         const insertParams = { title, hashOfTitle, remoteArticlePath };
         await this.sqliteRepository.insertTitleIndex(insertParams);
-        // insertParams.title 不可以 为 ‘‘ 空字符串，直接抛出错误
+        // insertParams.title cannot be '' empty string, an error will be thrown directly
         if (!insertParams.title) {
             throw new Error('Title is required');
         }
         await this.sqliteRepository.insertTitleIndexCache(insertParams);
 
-        // ---- 3. 检查 cache 是否达到 flush 阈值 ----
+        // ---- 3. Check if cache has reached flush threshold ----
         const cacheCount = await this.sqliteRepository.getTitleIndexCacheCount();
         console.log(`titleIndexCache count: ${cacheCount}, threshold: ${TITLE_INDEX_CACHE_FLUSH_THRESHOLD}`);
 
         if (cacheCount < TITLE_INDEX_CACHE_FLUSH_THRESHOLD) {
-            // 还没攒够，等下次再推
+            // Not enough, wait for the next push
             return;
         }
 
-        // ---- 4. 读取所有 cache 条目，组装为 JSON 行 ----
+        // ---- 4. Read all cache entries and assemble them into JSON lines ----
         const cacheEntries = this.sqliteRepository.getAllTitleIndexCache();
         if (cacheEntries.length === 0) {
             return;
         }
 
-        // 每条记录转为一行 JSON，最新的在最前面（cacheEntries 按 createdAt ASC，反转后最新在前）
+        // Each record is converted to a line of JSON, with the latest at the front (cacheEntries is sorted by createdAt ASC, reversed to have the latest first)
         const newLines = [...cacheEntries].reverse().map(entry =>
             JSON.stringify({
                 title: entry.title,
@@ -675,7 +681,7 @@ export class MyDurableObject extends DurableObject<Env> {
             })
         ).join('\n');
 
-        // ---- 5. 从 GitHub 获取现有索引文件内容 ----
+        // ---- 5. Get existing index file content from GitHub ----
         const fileUrl = `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${titleIndexFilePath}`;
         let existingContent = '';
         let fileSha: string | null = null;
@@ -693,20 +699,20 @@ export class MyDurableObject extends DurableObject<Env> {
         if (getRes.ok) {
             const fileData = (await getRes.json()) as { sha: string; content: string };
             fileSha = fileData.sha;
-            // GitHub 返回的 content 是 base64 编码且可能含换行符
+            // The content returned by GitHub is base64 encoded and may contain newlines
             existingContent = Buffer.from(fileData.content.replace(/\n/g, ''), 'base64').toString('utf-8');
         }
 
-        // ---- 6. 将新条目 prepend 到文件最前面 ----
+        // ---- 6. Prepend new entries to the front of the file ----
         const mergedContent = existingContent
             ? `${newLines}\n${existingContent}`
             : newLines;
 
         const base64Content = Buffer.from(mergedContent, 'utf-8').toString('base64');
 
-        // ---- 7. 推送到 GitHub（带重试） ----
+        // ---- 7. Push to GitHub (with retries) ----
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            // 重试时重新获取 SHA
+            // Retry fetching SHA
             if (attempt > 0) {
                 const retryGetRes = await fetch(fileUrl, {
                     method: 'GET',
@@ -718,8 +724,8 @@ export class MyDurableObject extends DurableObject<Env> {
                 if (retryGetRes.ok) {
                     const retryData = (await retryGetRes.json()) as { sha: string; content: string };
                     if (retryData.sha !== fileSha) {
-                        // SHA 变了，说明文件在两次请求之间被其他 commit 修改过，
-                        // 需要基于最新内容重新合并，否则会覆盖掉别人的修改。
+                        // SHA has changed, indicating the file was modified by another commit
+                        // We need to re-merge based on the latest content, otherwise we might overwrite others' changes.
                         fileSha = retryData.sha;
                         const latestContent = Buffer.from(retryData.content.replace(/\n/g, ''), 'base64').toString('utf-8');
                         const reMerged = latestContent
@@ -727,7 +733,7 @@ export class MyDurableObject extends DurableObject<Env> {
                             : newLines;
                         var updatedBase64 = Buffer.from(reMerged, 'utf-8').toString('base64');
                     } else {
-                        // SHA 没变，文件内容未被修改，沿用之前已合并好的内容即可
+                        // SHA has not changed, the file content has not been modified, we can use the previously merged content
                         fileSha = retryData.sha;
                         var updatedBase64 = base64Content;
                     }
@@ -766,21 +772,21 @@ export class MyDurableObject extends DurableObject<Env> {
             throw new Error(`Failed to push title index to GitHub: ${errorText}`);
         }
 
-        // ---- 8. 推送成功，清空 titleIndexCache ----
+        // ---- 8. Push successful, clear titleIndexCache ----
         this.sqliteRepository.clearTitleIndexCache();
         console.log(`Flushed ${cacheEntries.length} title index entries to GitHub: ${titleIndexFilePath}`);
     }
 
-    // 2) 返回 Promise<Task>，不再直接构造 Response
+    // 2) Return Promise<Task>, no longer directly construct Response
     async updateTask(taskId: string, data: Partial<Task>): Promise<Task> {
         const existing = await this.state.storage.get<Task>(taskId)
         if (!existing) {
-        // 这里抛出 NotFoundError
+        // Here throw NotFoundError
         throw new NotFoundError(`Task with taskId=${taskId} not found`)
         }
 
         if (!this.isTaskPayload(data)) {
-        // 这里抛出 ValidationError
+        // Here throw ValidationError
         throw new ValidationError('Invalid task payload')
         }
 
@@ -805,11 +811,11 @@ export class MyDurableObject extends DurableObject<Env> {
         await this.state.storage.delete(taskId);
     }
 
-    // 重置 DO 存储和 SQLite 数据库
+    // Reset DO storage and SQLite database
     async resetDoKeyStorageAndSqlite(): Promise<any> {
         try {
             const result: any = {
-                section: "重置 DO Key 存储和 SQLite 数据库",
+                section: "Reset DO Key Storage and SQLite Database",
                 success: true,
                 data: {}
             };
@@ -822,7 +828,7 @@ export class MyDurableObject extends DurableObject<Env> {
                 await this.state.storage.delete(key);
             }
 
-            // 重置 SQLite 数据库（包括 kvMeta 中的文件索引）
+            // Reset SQLite database (including file index in kvMeta)
             const sqliteResetResult = await this.sqliteRepository.resetTables();
 
             result.data.doStorage = {
@@ -836,18 +842,17 @@ export class MyDurableObject extends DurableObject<Env> {
 
         } catch (error) {
             return {
-                section: "重置 DO Key 存储和 SQLite 数据库",
+                section: "Reset DO Key Storage and SQLite Database",
                 success: false,
                 error: error instanceof Error ? error.message : String(error)
             };
         }
     }
 
-    // ===================== 仓储层代理方法 =====================
-    // 以下方法通过代理到 SqliteRepository 实现
+    // The following methods are implemented by proxying to SqliteRepository
 
     /**
-     * 向 titleIndex 表中插入一条新的标题记录
+     * Insert a new title record into the titleIndex table
      */
     async insertTitleIndex(params: {
         title: string;
@@ -858,35 +863,35 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     /**
-     * 根据 hashOfTitle 查询标题记录
+     * Query title records based on hashOfTitle
      */
     async queryTitleIndexByHash(hashOfTitle: string): Promise<any | null> {
         return this.sqliteRepository.queryTitleIndexByHash(hashOfTitle);
     }
 
     /**
-     * 根据 ID 查询标题记录
+     * Query title records based on ID
      */
     async queryTitleIndexById(id: string): Promise<any | null> {
         return this.sqliteRepository.queryTitleIndexById(id);
     }
 
     /**
-     * 获取所有标题记录
+     * Get all title records
      */
     async getAllTitleIndex(): Promise<any[]> {
         return this.sqliteRepository.getAllTitleIndex();
     }
 
     /**
-     * 获取标题记录数量
+     * Get title record count
      */
     async getTitleIndexCount(): Promise<number> {
         return this.sqliteRepository.getTitleIndexCount();
     }
 
     /**
-     * 向 articleContent 表中插入一条新的文章内容记录
+     * Insert a new article content record into the articleContent table
      */
     async insertArticleContent(params: {
         title: string;
@@ -897,47 +902,47 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     /**
-     * 根据 title 查询文章内容
+     * Query article content by title
      */
     async queryArticleContentByTitle(title: string): Promise<any | null> {
         return this.sqliteRepository.queryArticleContentByTitle(title);
     }
 
     /**
-     * 根据 ID 查询文章内容
+     * Query article content by ID
      */
     async queryArticleContentById(id: string): Promise<any | null> {
         return this.sqliteRepository.queryArticleContentById(id);
     }
 
     /**
-     * 获取所有文章内容
+     * Get all article content
      */
     async getAllArticleContent(): Promise<any[]> {
         return this.sqliteRepository.getAllArticleContent();
     }
 
-    // 获取文章内容列表，支持分页
+    // Get article content list with pagination
     async getArticleContentList(page: number, pageSize: number): Promise<any[]> {
         return this.sqliteRepository.getArticleContentList(page, pageSize);
     }
 
     /**
-     * 获取特定标题的所有文章内容
+     * Get all article content by title
      */
     async getAllArticleContentByTitle(title: string): Promise<any[]> {
         return this.sqliteRepository.getAllArticleContentByTitle(title);
     }
 
     /**
-     * 获取文章内容数量
+     * Get article content count
      */
     async getArticleContentCount(): Promise<number> {
         return this.sqliteRepository.getArticleContentCount();
     }
 
     /**
-     * 更新文章内容
+     * Update article content
      */
     async updateArticleContent(params: {
         id: string;
@@ -947,27 +952,27 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     /**
-     * 删除标题记录
+     * Delete title record
      */
     async deleteTitleIndex(idOfTitleIndex: string): Promise<void> {
         return this.sqliteRepository.deleteTitleIndex(idOfTitleIndex);
     }
 
     /**
-     * 删除单个文章内容
+     * Delete a single article content
      */
     async deleteArticleContent(id: string): Promise<void> {
         return this.sqliteRepository.deleteArticleContent(id);
     }
 
     /**
-     * 删除特定标题的所有文章内容
+     * Delete all article content by title
      */
     async deleteAllArticlesByTitle(title: string): Promise<void> {
         return this.sqliteRepository.deleteAllArticlesByTitle(title);
     }
 
-    // debug 调用 getDODBStatus
+    // debug getDODBStatus 
     async getDODBStatus(): Promise<any> {
         return this.sqliteRepository.getDODBStatus();
     }
@@ -975,9 +980,9 @@ export class MyDurableObject extends DurableObject<Env> {
 
 function normalizeGitHubPath(path: string): string {
     return path
-        .replace(/\\/g, '/')        // 禁止反斜杠
-        .replace(/\/+/g, '/')       // 合并多余 /
-        .replace(/^\/|\/$/g, '');   // 去掉首尾 /
+        .replace(/\\/g, '/')        // Replace backslashes with forward slashes
+        .replace(/\/+/g, '/')       // Merge multiple slashes
+        .replace(/^\/|\/$/g, '');   // Remove leading and trailing slashes
 }
 
 function getFolderPath(

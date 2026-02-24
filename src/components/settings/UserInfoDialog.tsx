@@ -23,7 +23,7 @@ export default function ProfileUpdateForm() {
       };
       reader.readAsDataURL(file);
     }
-    // 重置 input 的 value，这样下次可以选择同一个文件
+    // Reset the input value so that the same file can be selected next time.
     e.target.value = '';
   };
 
@@ -45,7 +45,7 @@ export default function ProfileUpdateForm() {
               {avatar ? (
                 <img 
                   src={typeof avatar === 'string' && avatar.startsWith('data:') ? avatar : avatar}
-                  alt="用户头像"
+                  alt="User Avatar"
                   className="w-full h-full object-cover"
                 />
               ) : (
@@ -73,7 +73,7 @@ export default function ProfileUpdateForm() {
         {/* Username Field */}
         <div className="mb-2">
           <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-            用户名（用于登录）
+            Username (for login)
           </label>
           <input
             type="text"
@@ -87,14 +87,14 @@ export default function ProfileUpdateForm() {
         {/* Email Field */}
         <div className="mb-2">
           <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-            邮箱（可选）
+            Email (optional)
           </label>
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
-            placeholder="输入邮箱地址"
+            placeholder="Enter email address"
           />
         </div>
       </div>

@@ -11,8 +11,8 @@ const {
 
 interface EditorProps {
   containerId?: string;
-  value: string;                          // React 传入的值
-  onChange: (value: string) => void;      // React 的 onChange 回调
+  value: string;                          // React passed in value
+  onChange: (value: string) => void;      // React's onChange callback
 }
 
 const MarkdownEditor: React.FC<EditorProps> = ({
@@ -23,7 +23,7 @@ const MarkdownEditor: React.FC<EditorProps> = ({
   const editorRef = useRef<any>(null);
 
   useEffect(() => {
-    // 图片上传插件
+    // Image upload plugin
     const imageUploadPlugin = createImageUploadPlugin({
       imageUploadUrl: "", 
       imageFormats: [
@@ -36,10 +36,10 @@ const MarkdownEditor: React.FC<EditorProps> = ({
       ],
     });
 
-    // Markdown 预览插件
+    // Markdown preview plugin
     const markdownPreviewPlugin = createMarkdownPreviewPlugin(githubPreviewConfig);
 
-    // 初始化编辑器
+    // Initialize editor
     const editor = createChunEditor({
       doc: value || "",
       lineWrapping: true,
@@ -53,7 +53,7 @@ const MarkdownEditor: React.FC<EditorProps> = ({
 
     editorRef.current = editor;
 
-    // 监听内容变化，回调给 React
+    // Listen for content changes and callback to React
     editor.on("change", () => {
       const content = editor.getValue();
       onChange(content);
@@ -66,7 +66,7 @@ const MarkdownEditor: React.FC<EditorProps> = ({
     };
   }, [containerId]);
 
-  // 受控更新：当 value 改变时，手动更新编辑器
+  // Controlled update: when value changes, manually update the editor
   useEffect(() => {
     if (editorRef.current && value !== editorRef.current.getValue()) {
       editorRef.current.setValue(value);
