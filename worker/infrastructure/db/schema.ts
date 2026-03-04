@@ -58,6 +58,7 @@ export const userSettings = sqliteTable("user_settings",
 export const githubRepoAccess = sqliteTable("github_access", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  branch: text("branch", { length: 255 }),
   githubRepoName: text("github_repo_name", { length: 255 }),
   vaultPathInRepo: text("vault_path_in_repo", { length: 255 }),
   accessToken: text("access_token", { length: 255 }),

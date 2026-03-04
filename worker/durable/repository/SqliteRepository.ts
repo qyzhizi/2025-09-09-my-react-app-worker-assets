@@ -15,6 +15,38 @@ import type {
 
 import { v4 as uuidv4 } from "uuid";
 
+/** Centralized kvMeta key constants to avoid hardcoded strings scattered across the codebase */
+export const KV_META_KEYS = {
+    INITIALIZED: 'initialized',
+    FOLDER_INDEX_IN_VAULT: 'folderIndexInVault',
+    FILE_INDEX_IN_FOLDER: 'fileIndexInFolder',
+    INDEX_OF_TITLE_INDEX_FILES: 'indexOfTitleIndexFiles',
+    CURRENT_TITLE_INDEX_COUNT: 'currentTitleIndexCount',
+} as const;
+
+/** Default initial key-value pairs of the kvMeta table */
+export const KV_META_DEFAULTS: ReadonlyArray<{ key: string; value: string }> = [
+    { key: KV_META_KEYS.INITIALIZED, value: 'true' },
+    { key: KV_META_KEYS.FOLDER_INDEX_IN_VAULT, value: '0' },
+    { key: KV_META_KEYS.FILE_INDEX_IN_FOLDER, value: '-1' },
+    { key: KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES, value: '0' },
+    { key: KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT, value: '-1' },
+];
+
+/**
+ * Insert the default initial values of kvMeta into the specified SQL instance
+ * @param sql - SQLite instance of Cloudflare Durable Object
+ */
+export function insertKvMetaDefaults(sql: any): void {
+    const valueClauses = KV_META_DEFAULTS
+        .map(({ key, value }) => `('${key}', '${value}')`)
+        .join(',\n                   ');
+    sql.exec(`
+            INSERT INTO kvMeta (key, value)
+            VALUES ${valueClauses}
+        `);
+}
+
 export class SqliteRepository {
     private sql: any;
     private maxArticlesToStore: number;
@@ -244,7 +276,7 @@ export class SqliteRepository {
      * Also check whether the MAX_ENTRIES limit is exceeded, and if so, delete the oldest record through LRU
      */
     async insertTitleIndex(params: InsertTitleIndexParams): Promise<InsertResult> {
-        const { title, hashOfTitle, remoteArticlePath } = params;
+        const { title, hashOfTitle, remoteArticlePath, createdAt } = params;
         const id = uuidv4();
 
         // Check if a record with the same hashOfTitle already exists
@@ -255,16 +287,31 @@ export class SqliteRepository {
         const existsArray = this.convertCursorToArray(existing);
         const isNew = existsArray.length === 0;
 
-        this.sql.exec(
-            `
-            INSERT INTO titleIndex (id, title, hashOfTitle, remoteArticlePath)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(hashOfTitle) DO UPDATE SET
-                remoteArticlePath = excluded.remoteArticlePath,
-                last_access = cast(strftime('%s','now') as int)
-            `,
-            id, title, hashOfTitle, remoteArticlePath
-        );
+        if (createdAt) {
+            // Use the provided createdAt value (e.g. from GitHub title index file)
+            this.sql.exec(
+                `
+                INSERT INTO titleIndex (id, title, hashOfTitle, remoteArticlePath, createdAt)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(hashOfTitle) DO UPDATE SET
+                    remoteArticlePath = excluded.remoteArticlePath,
+                    last_access = cast(strftime('%s','now') as int)
+                `,
+                id, title, hashOfTitle, remoteArticlePath, createdAt
+            );
+        } else {
+            // Use SQLite DEFAULT CURRENT_TIMESTAMP
+            this.sql.exec(
+                `
+                INSERT INTO titleIndex (id, title, hashOfTitle, remoteArticlePath)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(hashOfTitle) DO UPDATE SET
+                    remoteArticlePath = excluded.remoteArticlePath,
+                    last_access = cast(strftime('%s','now') as int)
+                `,
+                id, title, hashOfTitle, remoteArticlePath
+            );
+        }
 
         // Only increment count if a new row was actually inserted (not updated)
         if (isNew) {
@@ -275,6 +322,89 @@ export class SqliteRepository {
         await this.evictIfNeeded();
 
         return { id };
+    }
+
+    /**
+     * Batch insert multiple title records into the titleIndex table.
+     * More efficient than calling insertTitleIndex individually because:
+     * - Counter is updated once with the total count
+     * - evictIfNeeded is called only once at the end
+     * - Supports optional createdAt per entry (preserves original timestamps from GitHub)
+     *
+     * @param paramsList - Array of InsertTitleIndexParams (with optional createdAt)
+     * @returns Array of InsertResult with generated ids
+     */
+    async batchInsertTitleIndex(
+        paramsList: InsertTitleIndexParams[]
+    ): Promise<InsertResult[]> {
+        if (paramsList.length === 0) {
+            return [];
+        }
+
+        const results: InsertResult[] = [];
+        let insertedCount = 0;
+
+        // Process one by one because each entry may or may not have createdAt,
+        // and we need to check for duplicates via hashOfTitle (UPSERT).
+        // SQLite has a default SQLITE_MAX_VARIABLE_NUMBER limit (typically 999).
+        // Each row uses 4-5 placeholders, so process in chunks of 200 rows.
+        const CHUNK_SIZE = 200;
+
+        for (let i = 0; i < paramsList.length; i += CHUNK_SIZE) {
+            const chunk = paramsList.slice(i, i + CHUNK_SIZE);
+
+            // Separate entries with and without createdAt for different SQL statements
+            const withCreatedAt: Array<{ id: string; title: string; hashOfTitle: string; remoteArticlePath: string; createdAt: string }> = [];
+            const withoutCreatedAt: Array<{ id: string; title: string; hashOfTitle: string; remoteArticlePath: string }> = [];
+
+            for (const params of chunk) {
+                const id = uuidv4();
+                results.push({ id });
+                if (params.createdAt) {
+                    withCreatedAt.push({ id, title: params.title, hashOfTitle: params.hashOfTitle, remoteArticlePath: params.remoteArticlePath, createdAt: params.createdAt });
+                } else {
+                    withoutCreatedAt.push({ id, title: params.title, hashOfTitle: params.hashOfTitle, remoteArticlePath: params.remoteArticlePath });
+                }
+            }
+
+            // Batch insert entries WITH createdAt
+            if (withCreatedAt.length > 0) {
+                const placeholders = withCreatedAt.map(() => '(?, ?, ?, ?, ?)').join(', ');
+                const bindValues = withCreatedAt.flatMap(({ id, title, hashOfTitle, remoteArticlePath, createdAt }) =>
+                    [id, title, hashOfTitle, remoteArticlePath, createdAt]
+                );
+                this.sql.exec(
+                    `INSERT OR IGNORE INTO titleIndex (id, title, hashOfTitle, remoteArticlePath, createdAt) VALUES ${placeholders}`,
+                    ...bindValues
+                );
+                insertedCount += withCreatedAt.length;
+            }
+
+            // Batch insert entries WITHOUT createdAt (use DEFAULT CURRENT_TIMESTAMP)
+            if (withoutCreatedAt.length > 0) {
+                const placeholders = withoutCreatedAt.map(() => '(?, ?, ?, ?)').join(', ');
+                const bindValues = withoutCreatedAt.flatMap(({ id, title, hashOfTitle, remoteArticlePath }) =>
+                    [id, title, hashOfTitle, remoteArticlePath]
+                );
+                this.sql.exec(
+                    `INSERT OR IGNORE INTO titleIndex (id, title, hashOfTitle, remoteArticlePath) VALUES ${placeholders}`,
+                    ...bindValues
+                );
+                insertedCount += withoutCreatedAt.length;
+            }
+        }
+
+        console.log(`Batch inserted ${insertedCount} title index record(s) (some may have been skipped due to duplicates)`);
+
+        // Update count table once for all inserts (use INSERT OR IGNORE, so actual inserted may be fewer)
+        // For accuracy we could query the real count, but for efficiency we use the upper bound
+        // and the counter will self-correct on next reset/init
+        this.incrementTableCount('titleIndex', insertedCount);
+
+        // Check whether the LRU cache limit is exceeded (once after all inserts)
+        await this.evictIfNeeded();
+
+        return results;
     }
 
     /**
@@ -460,6 +590,71 @@ export class SqliteRepository {
         await this.enforceArticleCountLimit();
 
         return { id };
+    }
+
+    /**
+     * Batch insert multiple article content records into the articleContent table.
+     * More efficient than calling insertArticleContent individually because:
+     * - Counter is updated once with the total count
+     * - enforceArticleCountLimit is called only once at the end
+     * 
+     * @param paramsList - Array of InsertArticleContentParams
+     * @returns Array of InsertResult with generated ids
+     */
+    async batchInsertArticleContent(
+        paramsList: InsertArticleContentParams[]
+    ): Promise<InsertResult[]> {
+        if (paramsList.length === 0) {
+            console.log(`batchInsertArticleContent, No valid params to insert`);
+            return [];
+        }
+
+        // Pre-validate all params and generate ids
+        // Assign sequential createdAt timestamps so each record has a distinct creation time
+        const baseTime = Date.now();
+        const prepared: Array<{ id: string; title: string; content: string; createdAt: string }> = [];
+        for (let idx = 0; idx < paramsList.length; idx++) {
+            const { title, content } = paramsList[idx];
+            if (title === undefined || title === null) {
+                throw new Error(`Invalid title: ${title}`);
+            }
+            if (content === undefined || content === null) {
+                throw new Error(`Invalid content: ${content}`);
+            }
+            // Each record gets baseTime + idx milliseconds, formatted as ISO 8601 string
+            const createdAt = new Date(baseTime + idx).toISOString().replace('T', ' ').replace('Z', '');
+            prepared.push({ id: uuidv4(), title, content, createdAt });
+        }
+
+        // SQLite has a default SQLITE_MAX_VARIABLE_NUMBER limit (typically 999).
+        // Each row uses 4 placeholders, so process in chunks of 200 rows.
+        const CHUNK_SIZE = 200;
+
+        for (let i = 0; i < prepared.length; i += CHUNK_SIZE) {
+            const chunk = prepared.slice(i, i + CHUNK_SIZE);
+            const placeholders = chunk.map(() => '(?, ?, ?, ?)').join(', ');
+            const bindValues = chunk.flatMap(({ id, title, content, createdAt }) => [id, title, content, createdAt]);
+
+            this.sql.exec(
+                `INSERT INTO articleContent (id, title, content, createdAt) VALUES ${placeholders}`,
+                ...bindValues
+            );
+        }
+
+        console.log(`Batch inserted ${prepared.length} article(s): ${prepared.map(p => `id=${p.id}, title="${p.title}", len=${p.content.length}, createdAt=${p.createdAt}`).join('; ')}`);
+
+        // Update count table once for all inserts
+        try {
+            this.incrementTableCount('articleContent', prepared.length);
+        } catch (error) {
+            console.error(`Failed to update count table:`, error);
+            throw error;
+        }
+
+        // Check whether the storage limit is exceeded (once after all inserts)
+        await this.enforceArticleCountLimit();
+
+        return prepared.map(({ id }) => ({ id }));
     }
 
     /**
@@ -705,14 +900,11 @@ export class SqliteRepository {
             `);
             
             const tablesArray = this.convertCursorToArray(tables);
-            // console.log("tablesArray: ", JSON.stringify(tablesArray, null, 2));
-            // console.log("item type: ", typeof tablesArray[0]);
             result.data.tables = tablesArray;
 
             // Get record count for each table (excluding table structure due to PRAGMA command restrictions in Cloudflare Durable Object)
             const tableDetails: any[] = [];
             tablesArray.forEach((table: any) => {
-                // console.log(`Processing table: ${table.name}`);
                 try {
                     const count = this.sql.exec(`SELECT COUNT(*) as count FROM ${table.name}`);
                     // get column names
@@ -741,7 +933,6 @@ export class SqliteRepository {
             });
             
             result.data.tableDetails = tableDetails;
-            // console.log("tableDetails: ", JSON.stringify(tableDetails, null, 2));
 
             // Get all indexes
             const indexes = this.sql.exec(`
@@ -752,10 +943,8 @@ export class SqliteRepository {
             `);
             
             const indexesArray = this.convertCursorToArray(indexes);
-            // console.log("indexesArray: ", JSON.stringify(indexesArray, null, 2));
             result.data.indexes = indexesArray;
 
-            // console.log("result: ", JSON.stringify(result, null, 2));
 
             return result;
             
@@ -956,6 +1145,15 @@ export class SqliteRepository {
         return this.convertCursorToArray(result);
     }
 
+    /**
+     * Reset kvMeta to default initial values
+     * Clears all existing kvMeta entries and inserts the default key-value pairs
+     */
+    resetKvMetaToDefaults(): void {
+        this.sql.exec(`DELETE FROM kvMeta`);
+        insertKvMetaDefaults(this.sql);
+    }
+
     // Reset all tables
     resetTables(): any {
         try {
@@ -976,15 +1174,7 @@ export class SqliteRepository {
             this.sql.exec(`DELETE FROM titleIndexCache`);
 
             // Reset kvMeta file indices to initial values
-            this.sql.exec(`DELETE FROM kvMeta`);
-            this.sql.exec(`
-                INSERT INTO kvMeta (key, value)
-                VALUES ('initialized', 'true'),
-                       ('folderIndexInVault', '0'),
-                       ('fileIndexInFolder', '-1'),
-                       ('currentTitleIndexCount', '0'),
-                       ('indexOfTitleIndexFiles', '-1')
-            `);
+            this.resetKvMetaToDefaults();
 
             result.data.deletedTables = ['titleIndex', 'articleContent', 'titleIndexCache'];
             result.data.preservedStructures = [

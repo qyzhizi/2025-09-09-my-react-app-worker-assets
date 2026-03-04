@@ -30,6 +30,9 @@ import {
   getArticleContentListHandler,
  } from '@/handler'
 
+ import {getRepoFileListHandler,
+  getRepoVaultMetaInfoHandler} from '@/handlers/githubAppHandler'
+
 
  import { GITHUB_LOGIN_PATH } from "./ConstVar";
 
@@ -68,6 +71,8 @@ app.post('/diary-log/addlog', addLogHandler)
 app.get('/article/content/list', getArticleContentListHandler)
 app.post('/storage/preference', setStoragePreferenceHandler)
 app.get('/storage/preference', getStoragePreferenceHandler)
+app.get('/repo/file/list', getRepoFileListHandler)
+app.get('/repo/vault/meta/info', getRepoVaultMetaInfoHandler)
 app.post('/save-repo-and-test-connection', saveRepoAndTestConnectionHandler)
 app.get('/get-github-repo-info', getGitHubRepoInfoHandler)
 app.get('/vault/info', getVaultInfoHandler)

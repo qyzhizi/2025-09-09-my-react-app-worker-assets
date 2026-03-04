@@ -1,10 +1,13 @@
 import { drizzle } from "drizzle-orm/d1";
+import type { InferInsertModel } from 'drizzle-orm';
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import type { Context } from "hono";
 
 import { tables, githubRepoAccess} from "./db/schema";
 import {type GithubRepoAccess} from "./types";
+
+type GithubRepoAccessInsert = InferInsertModel<typeof githubRepoAccess>;
 
 export const addOrUpdategithubRepoAccessData = async (
     c: Context,
@@ -75,7 +78,7 @@ export const updategithubRepoAccessByUserId = async (
   
 export const safeUpdategithubRepoAccessByUserId = async (
   c: Context,
-  updates: Partial<typeof githubRepoAccess._.columns>
+  updates: Partial<GithubRepoAccessInsert>
 ) => {
   const db = drizzle(c.env.DB, { schema: tables });
   const userId = c.get("userId");

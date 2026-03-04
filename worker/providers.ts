@@ -1,8 +1,11 @@
 import type { Context } from "hono";
-import { getgithubRepoAccessInfo } from "./infrastructure/githubRepoAccess";
 import {TokenExpiredError, DBError } from "@/types/error";
+import { getgithubRepoAccessInfo } from "./infrastructure/githubRepoAccess";
+import {fetchVaultMetaInfo} from "@/durable/github/githubApp"
 import { addOrUpdategithubRepoAccessData } from "@/infrastructure/githubRepoAccess";
 import {type GithubRepoAccess} from "@/infrastructure/types";
+import {type VaultMetaInfo} from "@/types/provider";
+
 
 interface OriginGitHubAppTokenInfo {
   access_token: string ;
@@ -161,7 +164,6 @@ export async function testGitHubRepoAcess(accessToken:string, githubUserName:str
     }
 
     const repoData = await response.json() as { name: string; owner: { login: string } };
-    // console.log("repoData: ", repoData)
     console.log("testGitHubRepoAcess ok: ", repoData.owner.login, repoData.name )
     
     return {
@@ -172,4 +174,20 @@ export async function testGitHubRepoAcess(accessToken:string, githubUserName:str
     console.error("Exception in testGitHubRepoAcess:", error);
     throw error;
   }
+}
+
+export async function getRepoVaultMetaInfo(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<VaultMetaInfo>{
+  const githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
+
+  const githubRepoName = githubAccessInfo?.githubRepoName ?? null;
+  const githubUserName = githubAccessInfo?.githubUserName ?? null;
+  const vaultPathInRepo = githubAccessInfo?.vaultPathInRepo ?? null;
+  const vaultName = githubAccessInfo?.vaultName ?? null;
+  const accessToken = githubAccessInfo?.accessToken ?? null;
+
+  if (!githubRepoName || !githubUserName || !vaultPathInRepo || !accessToken || !vaultName) {
+    throw new Error('GitHub repository information is incomplete, Please set GitHub repo info first!');
+  }
+
+  return fetchVaultMetaInfo(githubUserName, githubRepoName, vaultPathInRepo, vaultName, accessToken);
 }

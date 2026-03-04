@@ -27,11 +27,8 @@ export const durableCreateTaskAndSaveArticleToDB = async (c: Context,
     const stub = c.env.MY_DURABLE_OBJECT.get(doId)
 
     try {
-        // console.log("taskParams: ", taskParams)
         const createdTask = await stub.createTaskAndSaveArticleToDB(taskParams)
         return c.json(createdTask, 201) // 201 Created
-        // const greeting = await stub.sayHello("world, lzp");
-        // return c.json(greeting, 201) // 201 Created
     } catch (err) {
         if (err instanceof ValidationError) {
             return c.text(err.message, 400)
@@ -89,6 +86,26 @@ export const resetDoKeyStorageAndSqlite = async (c: Context) => {
         return resetResult
     } catch (err) {
         console.error('Unexpected error in resetDoKeyStorageAndSqlite:', err)
+        return c.text('Internal Server Error', 500)
+    }
+}
+
+export const switchAndInitVault = async (c: Context,
+    githubUserName: string,
+    githubRepoName: string,
+    vaultPathInRepo: string,
+    vaultName: string,
+    branch: string,
+    accessToken: string    
+) => {
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+        `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
+    const stub = c.env.MY_DURABLE_OBJECT.get(doId)
+
+    try {
+        await stub.switchAndInitVault(githubUserName, githubRepoName, vaultPathInRepo, vaultName, branch, accessToken)
+    } catch (err) {
+        console.error('Unexpected error in switchAndInitVault:', err)
         return c.text('Internal Server Error', 500)
     }
 }

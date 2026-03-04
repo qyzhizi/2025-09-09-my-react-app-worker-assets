@@ -1,13 +1,20 @@
 import { DurableObject } from "cloudflare:workers";
 import { NotFoundError, ValidationError } from "@/types/error"
 import type { Task, PushGitRepoTaskParams, PushGitRepoTaskRespon } from "@/types/durable";
-import { SqliteRepository } from "@/durable/repository";
+import {type VaultMetaInfo} from "@/types/provider";
+import { SqliteRepository, KV_META_KEYS, KV_META_DEFAULTS } from "@/durable/repository";
+
+import { getFolderPath, getTitleIndexRootPath } from "@/durable/github/githubApp";
+import {fetchVaultMetaInfo} from "@/durable/github/githubApp"
+import {batchGetFileContents} from "@/durable/github/githubGetContent";
+import { getTitleFromContent } from "@/common"
+import { createEmptyFolderPathInRepoIfNotExists } from "@/durable/github/githubApp";
 
 const MAX_FILES_PER_FOLDER = 1000;
 const MAX_ARTICLES_TO_STORE = 1000;
 const MAX_SINGLE_FILE_TITLE_INDEX = 1000;
 /** After the titleIndexCache accumulates to this quantity, it will be flushed in bulk to the GitHub index file. */
-const TITLE_INDEX_CACHE_FLUSH_THRESHOLD = 10;
+const TITLE_INDEX_CACHE_FLUSH_THRESHOLD = 5;
 
 interface FileLocationResult {
     folderIndex: number;
@@ -57,23 +64,19 @@ export class MyDurableObject extends DurableObject<Env> {
 
     async initialize(forceInit: boolean = false) {
         // Read initialization token from SQLite kvMeta table (persistent, not lost by DO eviction)
-        const stored = this.sqliteRepository.getKvMeta("initialized");
+        const stored = this.sqliteRepository.getKvMeta(KV_META_KEYS.INITIALIZED);
         if (stored !== 'true' || forceInit) {
           // First initialization: Set the file index starting value
           console.log("Durable Object initializing storage (writing to SQLite kvMeta)...");
-          this.sqliteRepository.setKvMeta("initialized", "true");
-          this.sqliteRepository.setKvMeta("folderIndexInVault", 0);
-          this.sqliteRepository.setKvMeta("fileIndexInFolder", -1);
-
-          // currentTitleIndexCount
-          this.sqliteRepository.setKvMeta("currentTitleIndexCount", 0);
-          this.sqliteRepository.setKvMeta("indexOfTitleIndexFiles", -1);
+          for (const { key, value } of KV_META_DEFAULTS) {
+            this.sqliteRepository.setKvMeta(key, value);
+          }
         } else {
           // DO rebuild after eviction: read from SQLite (SQLite is persistent and will not be lost)
-          const folderIndex = this.sqliteRepository.getKvMetaNumber("folderIndexInVault");
-          const fileIndex = this.sqliteRepository.getKvMetaNumber("fileIndexInFolder");
-          const indexOfTitleIndexFiles = this.sqliteRepository.getKvMetaNumber("indexOfTitleIndexFiles");
-          const currentTitleIndexCount = this.sqliteRepository.getKvMetaNumber("currentTitleIndexCount");
+          const folderIndex = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.FOLDER_INDEX_IN_VAULT);
+          const fileIndex = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.FILE_INDEX_IN_FOLDER);
+          const indexOfTitleIndexFiles = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES);
+          const currentTitleIndexCount = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT);
 
           console.log("Durable Object restored from SQLite kvMeta, folderIndex:", folderIndex, "fileIndex:", fileIndex, "indexOfTitleIndexFiles:", indexOfTitleIndexFiles, "currentTitleIndexCount:", currentTitleIndexCount);
         }
@@ -158,92 +161,6 @@ export class MyDurableObject extends DurableObject<Env> {
             throw new NotFoundError(`Durable Task with id=${id} not found`);
         }
         return task;
-    }
-
-    async checkFileExistsInRepo(
-        accessToken: string,
-        githubUserName: string,
-        repoName: string,
-        filePath: string
-    ): Promise<boolean> {
-        const res = await fetch(
-            `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${filePath}`,
-            {
-                method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    'User-Agent': 'Hono-Worker',
-                },
-            }
-        );
-        return res.ok;
-    }
-
-    async createEmptyFolderPathInRepo(
-        accessToken: string,
-        githubUserName: string,
-        repoName: string,
-        folderPath: string
-    ) {
-        const normalizedFolderPath = folderPath
-            .replace(/\\/g, '/')
-            .replace(/\/+/g, '/')
-            .replace(/^\/|\/$/g, '');
-        const placeholderFilePath = `${normalizedFolderPath}/.gitkeep`;
-        // Determine whether the file exists
-        const fileExists = await this.checkFileExistsInRepo(accessToken, githubUserName, repoName, placeholderFilePath);
-        if (fileExists) {
-            console.log("File already exists, skipping creation.");
-            return;
-        }
-
-        console.log("Creating folder in repo at path:", placeholderFilePath);
-
-        const MAX_RETRIES = 3;
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            // If it is a retry, recheck whether the file has been created by other concurrent requests.
-            const res = await fetch(
-                `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${placeholderFilePath}`,
-                {
-                    method: 'PUT',
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                        'User-Agent': 'Hono-Worker',
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        message: `Init folder ${normalizedFolderPath}`,
-                        content: Buffer.from('').toString('base64'),
-                    }),
-                }
-            );
-
-            // 201 = created, 200 = updated（Idempotent）
-            if (res.ok || res.status === 200) {
-                return;
-            }
-
-            // 409 Conflict: There may be concurrent requests operating on the same file
-            if (res.status === 409 && attempt < MAX_RETRIES - 1) {
-                console.warn(`SHA conflict (409) creating folder on attempt ${attempt + 1}, retrying...`);
-                await new Promise(r => setTimeout(r, 50 * Math.pow(2, attempt)));
-                continue;
-            }
-
-            // 422 means the file already exists (race creation)
-            if (res.status === 422) {
-                console.log("File already exists (422), skipping.");
-                return;
-            }
-
-            const errorText = await res.text();
-            console.log("Failed to create folder:", errorText);
-            // throw new Error(errorText);
-        }
-        // If the retries still fail, you can choose to throw an error or log and continue (based on business needs)
-        console.error("Failed to create folder after multiple attempts.");
-        // throw new Error("Failed to create folder after multiple attempts.");
-        throw new Error("Failed to create folder after multiple attempts.");
     }
 
     async createEmptyFileInRepo(
@@ -346,15 +263,17 @@ export class MyDurableObject extends DurableObject<Env> {
         }
 
         // The number of title indexes exceeds the limit, enter a new file
-        if (currentTitleIndexCount % maxSingleFileTitleIndex === 0) {
+        if (currentTitleIndexCount > 0 && currentTitleIndexCount % maxSingleFileTitleIndex === 0) {
+            console.log("Creating new title index file", "currentTitleIndexCount:", currentTitleIndexCount, "maxSingleFileTitleIndex:", maxSingleFileTitleIndex, "indexOfTitleIndexFiles:", indexOfTitleIndexFiles);
             needCreateIndexFile = true;
             nextIndexOfTitleIndexFiles = (indexOfTitleIndexFiles ?? -1) + 1;
             nextCurrentTitleIndexCount = 0; // Reset the current title index count and start counting the number of title indexes for new files
         }
 
         const folderPath = getFolderPath(vaultPathInRepo, vaultName, nextFolderIndex);
-        const filePath = `${folderPath}/File_${nextFileIndex}.md`;
-        const titleIndexFilePath = `${folderPath}/TitleIndex_${nextIndexOfTitleIndexFiles}.json`;
+        const titleIndexRootPath = getTitleIndexRootPath(vaultPathInRepo, vaultName);
+        const filePath = `${folderPath}/${nextFileIndex}.md`;
+        const titleIndexFilePath = `${titleIndexRootPath}/${nextIndexOfTitleIndexFiles}.json`;
 
         return {
             folderIndex: nextFolderIndex,
@@ -370,16 +289,6 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     async saveContentToDOSql(title: string, content: string): Promise<any> {
-        // const taskParams = await this.state.storage.get<PushGitRepoTaskParams>(taskId);
-        // if (!taskParams) {
-        // throw new NotFoundError(`Task with taskId=${taskId} not found`);
-        // }
-
-        // console.log("Saving content to DO SQL, taskParams:", taskParams);
-        // const { content } = taskParams;
-
-
-
         // 参数验证
         if (title === undefined || title === null || title === '') {
             console.warn("Warning: title is empty, using default");
@@ -407,10 +316,10 @@ export class MyDurableObject extends DurableObject<Env> {
         vaultPathInRepo: string;
         vaultName: string;
     }): Promise<FileLocationResult> {
-        const folder_index_in_vault = this.sqliteRepository.getKvMetaNumber("folderIndexInVault");
+        const folder_index_in_vault = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.FOLDER_INDEX_IN_VAULT);
         console.log("folder_index_in_vault", folder_index_in_vault);
      
-        const file_index_in_folder = this.sqliteRepository.getKvMetaNumber("fileIndexInFolder");
+        const file_index_in_folder = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.FILE_INDEX_IN_FOLDER);
         console.log("file_index_in_folder", file_index_in_folder);
 
         if (folder_index_in_vault === null) {
@@ -420,8 +329,9 @@ export class MyDurableObject extends DurableObject<Env> {
             throw new Error("fileIndexInFolder is missing in SQLite kvMeta");
         }
 
-        const currentTitleIndexCount = this.sqliteRepository.getKvMetaNumber("currentTitleIndexCount") || 0;
-        const indexOfTitleIndexFiles = this.sqliteRepository.getKvMetaNumber("indexOfTitleIndexFiles") ?? -1;
+        const currentTitleIndexCount = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT) || 0;
+        console.log("currentTitleIndexCount", currentTitleIndexCount);
+        const indexOfTitleIndexFiles = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES) ?? -1;
         console.log("currentTitleIndexCount", currentTitleIndexCount, "indexOfTitleIndexFiles", indexOfTitleIndexFiles);
 
         const result: FileLocationResult = await this.getNextFileLocation({
@@ -440,13 +350,11 @@ export class MyDurableObject extends DurableObject<Env> {
          * This way, even if subsequent await fetch yields execution, other concurrent requests will read the updated index.
          * Cost: If subsequent GitHub push fails, this file number will be "skipped", but this is harmless.
          */
-        this.sqliteRepository.setKvMeta("folderIndexInVault", result.folderIndex);
-        this.sqliteRepository.setKvMeta("fileIndexInFolder", result.fileIndex);
+        this.sqliteRepository.setKvMeta(KV_META_KEYS.FOLDER_INDEX_IN_VAULT, result.folderIndex);
+        this.sqliteRepository.setKvMeta(KV_META_KEYS.FILE_INDEX_IN_FOLDER, result.fileIndex);
 
-        // console.log("Updating indexOfTitleIndexFiles in SQLite kvMeta, indexOfTitleIndexFiles:", result.indexOfTitleIndexFiles)
-        this.sqliteRepository.setKvMeta("indexOfTitleIndexFiles", result.indexOfTitleIndexFiles);
-        // console.log("Updated indexOfTitleIndexFiles in SQLite kvMeta, indexOfTitleIndexFiles:", this.sqliteRepository.getKvMetaNumber("indexOfTitleIndexFiles"))
-        this.sqliteRepository.setKvMeta("currentTitleIndexCount", result.currentTitleIndexCount);
+        this.sqliteRepository.setKvMeta(KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES, result.indexOfTitleIndexFiles);
+        this.sqliteRepository.setKvMeta(KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT, result.currentTitleIndexCount);
 
         return result;
     }
@@ -491,11 +399,11 @@ export class MyDurableObject extends DurableObject<Env> {
         const initTasks: Promise<void>[] = [];
         if (result.needCreateFolder) {
             initTasks.push(
-                this.createEmptyFolderPathInRepo(
-                    accessToken,
+                createEmptyFolderPathInRepoIfNotExists(
                     githubUserName,
                     repoName,
-                    result.folderPath
+                    result.folderPath,
+                    accessToken,
                 )
             );
         }
@@ -976,30 +884,71 @@ export class MyDurableObject extends DurableObject<Env> {
     async getDODBStatus(): Promise<any> {
         return this.sqliteRepository.getDODBStatus();
     }
-}
 
-function normalizeGitHubPath(path: string): string {
-    return path
-        .replace(/\\/g, '/')        // Replace backslashes with forward slashes
-        .replace(/\/+/g, '/')       // Merge multiple slashes
-        .replace(/^\/|\/$/g, '');   // Remove leading and trailing slashes
-}
+    async switchAndInitVault(
+        githubUserName: string,
+        githubRepoName: string,
+        vaultPathInRepo: string,
+        vaultName: string,
+        branch: string,
+        accessToken: string
+    ): Promise<void> {
+        const INIT_MARKDOWN_FILES_TO_LOAD = 20; // The number of markdown files to load into memory during initialization, which can be adjusted based on actual needs and performance considerations.
+        // before Init Vault
+        this.resetDoKeyStorageAndSqlite();
+        // check vaultPathInRepo exists, if not, create it
+        await createEmptyFolderPathInRepoIfNotExists(githubUserName, githubRepoName, `${vaultPathInRepo}/${vaultName}`, accessToken);
 
-function getFolderPath(
-    vaultPathInRepo: string,
-    vaultName: string,
-    folderIndex: number 
-): string {
+        const vaultMetaInfo: VaultMetaInfo = await fetchVaultMetaInfo(
+            githubUserName,
+            githubRepoName,
+            vaultPathInRepo,
+            vaultName,
+            accessToken
+        );
+        // Initialize the vault with the retrieved metadata
+        console.log("Initializing vault with metadata:", vaultMetaInfo);
 
-    if (!Number.isInteger(folderIndex) || folderIndex < 0) {
-        throw new Error(`Invalid folder index: ${folderIndex}`);
+        let {folderIndexInVault, fileIndexInFolder, currentTitleIndexCount,indexOfTitleIndexFiles, markdownFileList, lastTitleIndexFileContentLines} = vaultMetaInfo;
+        // save the vault metadata to SQLite kvMeta for later use (such as determining the next file index when pushing content)
+        this.sqliteRepository.setKvMeta(KV_META_KEYS.FOLDER_INDEX_IN_VAULT, folderIndexInVault);
+        this.sqliteRepository.setKvMeta(KV_META_KEYS.FILE_INDEX_IN_FOLDER, fileIndexInFolder);
+        this.sqliteRepository.setKvMeta(KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT, currentTitleIndexCount);
+        this.sqliteRepository.setKvMeta(KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES, indexOfTitleIndexFiles);
+
+
+        // Sort markdownFileList in ascending order. The internal contents of markdownFileList are 0.md 1.md 2.md. To sort file names, use string sorting.
+        markdownFileList.sort((a, b) => parseInt(a.split('/').pop()?.split('.md')[0] || '0') - parseInt(b.split('/').pop()?.split('.md')[0] || '0'));
+
+        // Get the contents of the last INIT_MARKDOWN_FILES_TO_LOAD markdown files and save them to SQLite. You can then load more files or implement paged loading according to actual needs.
+        const selectedMarkdownFileList = markdownFileList.slice(-INIT_MARKDOWN_FILES_TO_LOAD);
+        console.log("Selected Markdown Files: ", selectedMarkdownFileList);
+        const FileContents = await batchGetFileContents(githubUserName, githubRepoName, selectedMarkdownFileList, branch,  accessToken);
+        console.log("FileContents: ", FileContents);
+        const articleParamsList = FileContents.map((fileContent) => ({
+            title: getTitleFromContent(fileContent.content),
+            content: fileContent.content,
+        }));
+        await this.sqliteRepository.batchInsertArticleContent(articleParamsList);
+
+        // save lastTitleIndexFileContentLines to sqlite titleIndex table
+        if (lastTitleIndexFileContentLines && lastTitleIndexFileContentLines.length > 0) {
+            const titleIndexParamsList = lastTitleIndexFileContentLines.map(line => {
+                try {
+                    const parsed = JSON.parse(line);
+                    return {
+                        title: parsed.title,
+                        hashOfTitle: parsed.hashOfTitle,
+                        remoteArticlePath: parsed.remoteArticlePath,
+                        createdAt: parsed.createdAt,
+                    };
+                } catch (error) {
+                    console.error("Failed to parse title index line:", line, "error:", error);
+                    return null;
+                }
+            }).filter((item): item is { title: string; hashOfTitle: string; remoteArticlePath: string; createdAt: string } => item !== null);
+            await this.sqliteRepository.batchInsertTitleIndex(titleIndexParamsList);
+        }
+
     }
-
-    const rawPath = [
-        vaultPathInRepo,
-        vaultName,
-        `Folder_${folderIndex}`
-    ].filter(Boolean).join('/');
-
-    return normalizeGitHubPath(rawPath);
 }

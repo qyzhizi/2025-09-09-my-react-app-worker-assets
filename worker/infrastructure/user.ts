@@ -165,7 +165,6 @@ export const findManyUsers = async (c: Context): Promise<User[]> => {
           updatedAt: true
         }
       });
-    // console.log(res)
     return res
 };
 

@@ -1,6 +1,7 @@
 export interface GithubRepoAccess {
   id: string;
   userId: string;
+  branch: string | null;
   githubRepoName: string | null;
   vaultPathInRepo: string | null;
   accessToken: string | null;
@@ -16,6 +17,7 @@ export interface GithubRepoAccess {
 export interface CreateGithubRepoAccess {
   id: string;
   userId: string;
+  branch?: string | null;
   githubRepoName?: string | null;
   vaultPathInRepo?: string | null;
   accessToken?: string | null;
@@ -29,6 +31,7 @@ export interface CreateGithubRepoAccess {
 }
 
 export interface UpdateGithubRepoAccess {
+  branch?: string | null;
   githubRepoName?: string | null;
   vaultPathInRepo?: string | null;
   accessToken?: string | null;

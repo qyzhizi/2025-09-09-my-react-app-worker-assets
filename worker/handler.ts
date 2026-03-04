@@ -4,7 +4,7 @@ import { setCookie } from "hono/cookie";
 import { sign } from "hono/jwt";
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { getInstallationRepositories } from '@/githubApp'
+import { getInstallationRepositories, getDefaultBranchFromGitHubAPI} from '@/durable/github/githubApp'
 
 import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService'
 import {durableHello,
@@ -12,6 +12,7 @@ import {durableHello,
   durablePushToGitHub,
   getDODatabaseStatus,
   resetDoKeyStorageAndSqlite,
+  switchAndInitVault,
   getArticleContentList,
 } from "@/durable/callDurable"
 import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
@@ -276,7 +277,7 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
 
     const taskId = nanoid()
     const now = new Date().toISOString()
-    const title = await getTitleFromContent(content) 
+    const title = getTitleFromContent(content) 
 
     const logEntry = {
       message: "update by Memoflow",
@@ -286,9 +287,14 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       title: title,
     }
 
-    const githubAccessInfo: GithubRepoAccess | null = await getOrUpdategithubRepoAccessInfo(c)
+    let githubAccessInfo: GithubRepoAccess | null;
+    try {
+      githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
+    } catch (TokenExpiredError) {
+      return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401);
+    }
     if (!githubAccessInfo || !githubAccessInfo.accessToken){
-      throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!")
+      throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!");
     }
 
     // First check if githubAccessInfo exists
@@ -299,7 +305,6 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       return c.json({ error: "githubRepoName is not exist" }, 400);
     }
     if (!githubAccessInfo.accessToken || !githubAccessInfo.githubUserName || !githubAccessInfo.githubRepoName) {
-      // console.log("githubAccessInfo:", githubAccessInfo)
       return c.json({ error: "Incomplete GitHub access record" }, 400);
     }
     // get vaultName
@@ -323,7 +328,6 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       createdAt: logEntry.created_at,
     }
     await durableCreateTaskAndSaveArticleToDB(c, taskParams)
-    // console.log("createdTask:", createdTask)
     
     try {
       const result = await durablePushToGitHub(c, taskId);
@@ -342,7 +346,6 @@ export async function getArticleContentListHandler(c: Context<{ Bindings: Env; V
   const page = c.req.query("page");
   const pageSize = c.req.query("pageSize");
 
-  console.log("getArticleContentListHandler called with:", { page, pageSize });
   if (!page || !pageSize) {
     return c.json({ error: 'Missing page or pageSize' }, 400);
   }
@@ -354,7 +357,6 @@ export async function getArticleContentListHandler(c: Context<{ Bindings: Env; V
 export async function getDODatabaseStatusHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   try {
     const dbStatus = await getDODatabaseStatus(c);
-    // console.log("dbStatus: ", JSON.stringify(dbStatus, null, 2));
     return c.json(dbStatus);
   } catch (error) {
     console.error("Error in getDODatabaseStatusHandler:", error);
@@ -406,7 +408,12 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
     console.log("userSettings: ", userSettings)
 
-    const githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c)
+    let githubAccessInfo;
+    try {
+      githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
+    } catch (TokenExpiredError) {
+      return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401);
+    }
     if (!githubAccessInfo || !githubAccessInfo.accessToken){
       throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!")
     }
@@ -414,18 +421,36 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     const dbGithubUserName = githubAccessInfo.githubUserName
     const dbGithubRepoName = githubAccessInfo.githubRepoName
     const dbVaultPathInRepo = githubAccessInfo.vaultPathInRepo
+    const dbVaultName = githubAccessInfo.vaultName // have default value in DB, won't be empty
+    let dbBranch = githubAccessInfo.branch
     if (!dbGithubUserName ) {
       throw new NotGetAccessTokenError("Fail to get GitHub username, Please login GitHub first, then try again!")
     }
     if (githubUserName !== dbGithubUserName ) {
-      console.log({githubUserName, dbGithubUserName})
       throw new NotGetAccessTokenError(" Input is inconsistent with DB  , Please login GitHub first, then try again!")
+    }
+    if (!dbBranch) {
+      console.warn("Branch info is not in DB, will use default branch when init vault")
+      // get default branch from GitHub API
+      dbBranch = await getDefaultBranchFromGitHubAPI(githubUserName, githubRepoName, accessToken)
+      console.log("Default branch from GitHub API: ", dbBranch)
+      // save branch info to DB
+      await safeUpdategithubRepoAccessByUserId(c, { branch: dbBranch });
     }
     let durableIsReset = false
     if (vaultPathInRepo !== dbVaultPathInRepo || githubRepoName !== dbGithubRepoName) {
       console.warn("vaultPathInRepo or githubRepoName is different from DB!")
       // reset durable object storage and sqlite to avoid potential issue caused by inconsistent repoName or vaultPathInRepo
-      await resetDoKeyStorageAndSqlite(c)
+      // await resetDoKeyStorageAndSqlite(c)
+      await switchAndInitVault(
+        c,
+        githubUserName,
+        githubRepoName,
+        vaultPathInRepo,
+        dbVaultName,
+        dbBranch,
+        accessToken
+      )
       durableIsReset = true
     }
 

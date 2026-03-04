@@ -4,3 +4,12 @@ export const Provider = {
 };
 
 export type ProviderType = (typeof Provider)[keyof typeof Provider];
+
+export interface VaultMetaInfo {
+  folderIndexInVault: string;
+  fileIndexInFolder: string;
+  currentTitleIndexCount: string;
+  indexOfTitleIndexFiles: string;
+  markdownFileList: string[];
+  lastTitleIndexFileContentLines: string[];
+}

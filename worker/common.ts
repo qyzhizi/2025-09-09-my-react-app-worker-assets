@@ -22,7 +22,6 @@ export function validateGitRepoFullName(repoName: string): void {
 
   // Check if the file name is legal
   if (!matchGitRepoFullName(repoName)) {
-    console.log("matchGitRepoName(repoName): ", matchGitRepoName(repoName))
     throw new ValidationError("github repo name Format error! Please check and try again");
   }
 }
@@ -34,7 +33,6 @@ export function validateGitRepoName(repoName: string): void {
 
   // Check if the file name is legal
   if (!matchGitRepoName(repoName)) {
-    console.log("matchGitRepoName(repoName): ", matchGitRepoName(repoName))
     throw new ValidationError("github repo name Format error! Please check and try again");
   }
 }
@@ -52,7 +50,7 @@ export async function generateJWT(appId: string, privateKey: string) {
   return token
 }
 
-export async function getTitleFromContent(content: string): Promise<string> {
+export function getTitleFromContent(content: string): string {
   // Extract titles using regular expressions
   let title = '';
   
@@ -68,6 +66,12 @@ export async function getTitleFromContent(content: string): Promise<string> {
       }
   }
   console.log("Extracted title: ", title)
-  console.log("Extracted content length: ", content?.length || 0)
   return title ;
+}
+
+export function normalizeGitHubPath(path: string): string {
+    return path
+        .replace(/\\/g, '/')        // Replace backslashes with forward slashes
+        .replace(/\/+/g, '/')       // Merge multiple slashes
+        .replace(/^\/|\/$/g, '');   // Remove leading and trailing slashes
 }
