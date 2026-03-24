@@ -31,7 +31,9 @@ import {
  } from '@/handler'
 
  import {getRepoFileListHandler,
-  getRepoVaultMetaInfoHandler} from '@/handlers/githubAppHandler'
+  getRepoVaultMetaInfoHandler,
+  searchCommitsHandler,
+} from '@/handlers/githubAppHandler'
 
 
  import { GITHUB_LOGIN_PATH } from "./ConstVar";
@@ -80,6 +82,7 @@ app.get('/github-app-setup', githubAppSetupHandler)
 app.get('/get-githubapp-installation-repositories', getGitHubAppInstallationReposHandler)
 app.get('/do-database-status', getDODatabaseStatusHandler)
 app.get('/reset-durable-object', resetDoKeyStorageAndSqliteHandler)
+app.get('/github-app/search-commits', searchCommitsHandler)
 // Export scheduled method independently
 export default {
   fetch: app.fetch,  // Export app.fetch as fetch function

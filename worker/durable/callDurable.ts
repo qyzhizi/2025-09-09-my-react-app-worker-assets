@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { NotFoundError, ValidationError } from "@/types/error"
+import { NEW_TAG, PER_PAGE } from "@/ConstVar";
 
 const DURABLE_NAME_PREFIX = 'MemoflowDO_'
 
@@ -60,6 +61,45 @@ export const durablePushToGitHub = async (c: Context,
 
     // Users get an immediate response, without waiting for the task to complete
     return { status: "accepted", taskId };
+}
+
+export const durableSearchCommits = async (c: Context,
+    {
+        githubUserName,
+        repoName,
+        accessToken,
+        threshold,
+        searchPath = "",
+        tag = NEW_TAG,
+        perPage = PER_PAGE,
+    }: {
+        githubUserName: string;
+        repoName: string;
+        accessToken: string;
+        threshold: number;
+        searchPath?: string;
+        tag?: string;
+        perPage?: number;
+    }): Promise<any> => {
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+        `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
+    const stub = c.env.MY_DURABLE_OBJECT.get(doId)
+
+    try {
+        const commits = await stub.searchCommits({
+            githubUserName,
+            repoName,
+            accessToken,
+            threshold,
+            searchPath,
+            tag,
+            perPage,
+        })
+        return commits
+    } catch (err) {
+        console.error('Unexpected error in searchCommits:', err)
+        return c.text('Internal Server Error', 500)
+    }
 }
 
 export const getDODatabaseStatus = async (c: Context) => {

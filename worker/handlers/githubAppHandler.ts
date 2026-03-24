@@ -3,6 +3,7 @@ import { getInstallationRepositories, getRepoFileList, getFileContent} from '@/d
 
 import {
   resetDoKeyStorageAndSqlite,
+  durableSearchCommits,
 } from "@/durable/callDurable"
 import { getUserSettingsFromDb, updateUserSettingsToDb } from "@/infrastructure/userSettings";
 import { safeUpdategithubRepoAccessByUserId,
@@ -13,7 +14,10 @@ import { ValidationError, NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
 import {testGitHubRepoAcess} from "@/providers"
 import { getRepoVaultMetaInfo } from "@/providers";
+import {type GithubRepoAccess} from "@/infrastructure/types";
+import { NEW_TAG, PER_PAGE, MAX_SEARCH_PAGES } from "@/ConstVar";
 
+const DEFAULT_SEARCH_COMMITS_THRESHOLD = 100;
 
 export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   try {
@@ -197,4 +201,56 @@ export async function getRepoFileListHandler(c:Context<{Bindings: Env, Variables
 export async function getRepoVaultMetaInfoHandler(c:Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>) {
     const vaultMetaInfo = await getRepoVaultMetaInfo(c);
     return c.json({ vaultMetaInfo });
+}
+
+export async function searchCommitsHandler(c:Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  const thresholdParam = c.req.query("threshold");
+  const tag = c.req.query("tag");
+  let threshold: number;
+  if (thresholdParam === undefined || thresholdParam === "") {
+    threshold = DEFAULT_SEARCH_COMMITS_THRESHOLD;
+  } else {
+    const n = Number(thresholdParam);
+    if (!Number.isFinite(n) || n < 0) {
+      return c.json({ error: "threshold must be a non-negative number" }, 400);
+    }
+    threshold = Math.floor(n);
+  }
+  let githubAccessInfo: GithubRepoAccess | null;
+  try {
+    githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
+  } catch (TokenExpiredError) {
+    return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401);
+  }
+  if (!githubAccessInfo || !githubAccessInfo.accessToken){
+    throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!");
+  }
+
+  // First check if githubAccessInfo exists
+  if (!githubAccessInfo) {
+    return c.json({ error: "GitHub app access record not found" }, 404);
+  }
+  if (!githubAccessInfo.githubRepoName){
+    return c.json({ error: "githubRepoName is not exist" }, 400);
+  }
+  if (!githubAccessInfo.accessToken || !githubAccessInfo.githubUserName || !githubAccessInfo.githubRepoName) {
+    return c.json({ error: "Incomplete GitHub access record" }, 400);
+  }
+  // get vaultName
+  const vaultPathInRepo = githubAccessInfo.vaultPathInRepo;
+  const vaultName = githubAccessInfo.vaultName;
+  if (!vaultPathInRepo || vaultPathInRepo.trim() === '') {
+    return c.json({ error: 'Empty vaultPathInRepo in githubAccessInfo' }, 400);
+  }
+  console.log("accessToken: ", githubAccessInfo.accessToken)
+  const commits = await durableSearchCommits(c, {
+    githubUserName: githubAccessInfo.githubUserName,
+    repoName: githubAccessInfo.githubRepoName,
+    accessToken: githubAccessInfo.accessToken,
+    threshold: threshold,
+    searchPath: `${vaultPathInRepo}/${vaultName}/`,
+    tag: tag,
+    perPage: PER_PAGE,
+  })
+  return c.json({ commits });
 }

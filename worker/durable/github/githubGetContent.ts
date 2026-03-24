@@ -94,8 +94,6 @@ async function fetchByGraphQLChunk(
     }
   `;
 
-  console.log("GraphQL query:\n", query);
-
   const res = await fetch(GITHUB_GRAPHQL, {
     method: "POST",
     headers: {
@@ -126,7 +124,6 @@ async function fetchByGraphQLChunk(
       }
     }
   };
-  console.log("GraphQL response: ", json);
 
   const okResults: { path: string; content: string }[] = [];
   const fallbackList: string[] = [];

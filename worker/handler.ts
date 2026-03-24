@@ -280,7 +280,7 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
     const title = getTitleFromContent(content) 
 
     const logEntry = {
-      message: "update by Memoflow",
+      message: "[NEW]: added by Memoflow",
       content,
       created_at: now,
       taskId: taskId,

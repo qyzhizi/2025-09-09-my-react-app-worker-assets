@@ -9,6 +9,9 @@ import {fetchVaultMetaInfo} from "@/durable/github/githubApp"
 import {batchGetFileContents} from "@/durable/github/githubGetContent";
 import { getTitleFromContent } from "@/common"
 import { createEmptyFolderPathInRepoIfNotExists } from "@/durable/github/githubApp";
+import { searchCommits } from "@/durable/github/searchCommits";
+import type { SearchCommitResult } from "@/durable/github/searchCommits";
+import { NEW_TAG, PER_PAGE } from "@/ConstVar";
 
 const MAX_FILES_PER_FOLDER = 1000;
 const MAX_ARTICLES_TO_STORE = 1000;
@@ -683,6 +686,40 @@ export class MyDurableObject extends DurableObject<Env> {
         // ---- 8. Push successful, clear titleIndexCache ----
         this.sqliteRepository.clearTitleIndexCache();
         console.log(`Flushed ${cacheEntries.length} title index entries to GitHub: ${titleIndexFilePath}`);
+    }
+
+    async searchCommits({
+        githubUserName,
+        repoName,
+        accessToken,
+        threshold,
+        searchPath = "",
+        tag = NEW_TAG,
+        perPage = PER_PAGE,
+    }: {
+        githubUserName: string;
+        repoName: string;
+        accessToken: string;
+        threshold: number;
+        searchPath?: string;
+        tag?: string;
+        perPage?: number;
+    }): Promise<SearchCommitResult[]> {
+        if (!githubUserName?.trim()) throw new ValidationError("githubUserName is required");
+        if (!repoName?.trim()) throw new ValidationError("repoName is required");
+        if (!accessToken?.trim()) throw new ValidationError("accessToken is required");
+
+        // searchPath = 
+
+        return searchCommits({
+            owner: githubUserName,
+            repo: repoName,
+            token: accessToken,
+            threshold,
+            searchPath,
+            tag,
+            perPage,
+        });
     }
 
     // 2) Return Promise<Task>, no longer directly construct Response
