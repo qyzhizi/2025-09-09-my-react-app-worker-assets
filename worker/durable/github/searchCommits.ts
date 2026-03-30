@@ -7,7 +7,7 @@
  *   3. 本地去重    → 按 sha 合并两路结果
  */
 
-import { NEW_TAG, PER_PAGE, MAX_SEARCH_PAGES } from "@/ConstVar";
+import { COMMITFILTER, PER_PAGE, MAX_SEARCH_PAGES } from "@/ConstVar";
 
 // ─────────────────────────────────────────────
 // 工具：统一构建请求头
@@ -58,15 +58,15 @@ export type SearchCommitResult = {
 // ─────────────────────────────────────────────
 function parseCommitItem(
   item: GitHubCommitItem,
-  tag: string | null,
+  commitFilter: string | null,
 ): Omit<SearchCommitResult, "source"> | null {
   const message = item.commit?.message ?? "";
 
-  // 如果外部传入了 tag，做二次确认（Commits API 路径用得到）
-  if (tag && !message.includes(tag)) return null;
+  // 如果外部传入了 commitFilter，做二次确认（Commits API 路径用得到）
+  if (commitFilter && !message.includes(commitFilter)) return null;
 
-  // 自动解析 hash（格式：${tag}: <hash> 或 ${tag} <hash>）
-  // const match = message.match(new RegExp(`${tag}[:\s]+([a-f0-9]{6,})`, "i"));
+  // 自动解析 hash（格式：${commitFilter}: <hash> 或 ${commitFilter} <hash>）
+  // const match = message.match(new RegExp(`${commitFilter}[:\s]+([a-f0-9]{6,})`, "i"));
   // const hash = match ? match[1] : null;
 
   // if (!hash) return null;
@@ -233,16 +233,16 @@ async function fetchSearchWindow({
 //   · saturated = false → 当前窗口已返回全部匹配，搜索结束
 //
 //   时间窗口示意：
-//     窗口 1：repo:X "${tag}"                          → 满 1000 条，saturated=true
-//     窗口 2：repo:X "${tag}" committer-date:<oldest1  → 满 1000 条，saturated=true
-//     窗口 3：repo:X "${tag}" committer-date:<oldest2  → 返回 340 条，saturated=false → 结束
+//     窗口 1：repo:X "${commitFilter}"                          → 满 1000 条，saturated=true
+//     窗口 2：repo:X "${commitFilter}" committer-date:<oldest1  → 满 1000 条，saturated=true
+//     窗口 3：repo:X "${commitFilter}" committer-date:<oldest2  → 返回 340 条，saturated=false → 结束
 // ─────────────────────────────────────────────
 async function searchAPI({
   owner,
   repo,
   token      = null,
   searchPath = "",
-  tag        = NEW_TAG,
+  commitFilter        = COMMITFILTER,
   perPage    = PER_PAGE,
   threshold,
 }: {
@@ -250,7 +250,7 @@ async function searchAPI({
   repo: string;
   token?: GitHubToken | null;
   searchPath?: string;
-  tag?: string;
+  commitFilter?: string;
   perPage?: number;
   threshold?: number;
 }): Promise<{ results: SearchCommitResult[]; latestDate: string | null }> {
@@ -265,7 +265,7 @@ async function searchAPI({
     return { results: [], latestDate };
   }
 
-  const coreQuery = `${tag} repo:${owner}/${repo}`;
+  const coreQuery = `${commitFilter} repo:${owner}/${repo}`;
   console.log("coreQuery: ", coreQuery);
   let   before    = null;  // 上一窗口最旧 commit 的时间，null 表示首次查询
   let   windowIdx = 0;
@@ -341,9 +341,9 @@ async function searchAPI({
   // 将原始 items 解析为统一结构
   const results = allItems
     .map((item): SearchCommitResult | null => {
-      // Search API 已经在 q 里限定了 message tag，这里仍需要把 tag 传进去，
+      // Search API 已经在 q 里限定了 message commitFilter，这里仍需要把 commitFilter 传进去，
       // 否则 parseCommitItem 内部用于提取 hash 的正则会变成匹配 "null ...".
-      const parsed = parseCommitItem(item, tag);
+      const parsed = parseCommitItem(item, commitFilter);
       if (!parsed) return null;
       return { ...parsed, source: "search" };
     })
@@ -376,7 +376,7 @@ async function commitListAPI({
   repo,
   token      = null,
   searchPath = "",
-  tag        = NEW_TAG,
+  commitFilter        = COMMITFILTER,
   since,          // ISO 8601，从此时间起扫描
   perPage    = PER_PAGE,
   maxPages,
@@ -386,7 +386,7 @@ async function commitListAPI({
   repo: string;
   token?: GitHubToken | null;
   searchPath?: string;
-  tag?: string;
+  commitFilter?: string;
   since?: string | null;
   perPage?: number;
   maxPages?: number | null;
@@ -450,7 +450,7 @@ async function commitListAPI({
     if (!Array.isArray(items) || items.length === 0) break;
 
     for (const item of items as GitHubCommitItem[]) {
-      const parsed = parseCommitItem(item, tag); // 本地过滤 tag
+      const parsed = parseCommitItem(item, commitFilter); // 本地过滤 commitFilter
       if (!parsed) continue;
       results.push({ ...parsed, source: "recent" });
       if (stopAt != null && results.length >= stopAt) {
@@ -474,7 +474,7 @@ async function commitListAPI({
  * @param {string}  options.repo         - 仓库名
  * @param {string}  [options.token]      - GitHub Personal Access Token（推荐，避免速率限制）
  * @param {string}  [options.searchPath] - 路径前缀，用于生成 path 字段，默认 ""
- * @param {string}  [options.tag]        - commit message 关键词，默认 NEW_TAG
+ * @param {string}  [options.commitFilter]        - commit message 关键词，默认 COMMITFILTER
  * @param {number}  [options.perPage]    - 每页条数，默认 100（Search API 最大值）
  * @param {number}  [options.threshold]  - 最多返回多少条匹配的 commit；不传则不限制
  *
@@ -495,16 +495,16 @@ async function searchCommits({
   threshold,
   since,
   searchPath = "",
-  tag        = NEW_TAG,
-  perPage    = PER_PAGE,
-  maxPages   = MAX_SEARCH_PAGES,
+  commitFilter = COMMITFILTER,
+  perPage = PER_PAGE,
+  maxPages,
 }: {
   owner: string;
   repo: string;
   token: GitHubToken;
   since?: string | null;
   searchPath?: string;
-  tag?: string;
+  commitFilter?: string;
   perPage?: number;
   threshold?: number;
   maxPages?: number | null;
@@ -514,63 +514,27 @@ async function searchCommits({
   if (stopAt === 0) return [];
 
   const normalizedPath = searchPath.trim().replace(/^\/+|\/+$/g, "");
-  // 仅使用 Commit List API：通过 since + path 过滤服务端范围，再在本地按 message 过滤 tag
+  // 仅使用 Commit List API：通过 since + path 过滤服务端范围，再在本地按 message 过滤 commitFilter
   // since 由调用方按需传入；不传则不加 since 过滤。
 
   console.log(
-    `[searchCommits] Commit List API: repo=${owner}/${repo} tag="${tag}" path="${normalizedPath}" since=${since}`
+    `[searchCommits] Commit List API: repo=${owner}/${repo} commitFilter="${commitFilter}" path="${normalizedPath}" since=${since}`
   );
   const results = await commitListAPI({
     owner,
     repo,
     token,
     searchPath: normalizedPath,
-    tag,
+    commitFilter,
     since,
     perPage,
     maxPages,
     threshold: stopAt,
   });
-  console.log(`[searchCommits] Commit List API → ${results.length} commits (tag filtered)`);
+  console.log(`[searchCommits] Commit List API → ${results.length} commits (commitFilter filtered)`);
   console.log("search commits results: ", results.slice(0, 2))
 
   return stopAt !== undefined ? results.slice(0, stopAt) : results;
 }
 
-// ─────────────────────────────────────────────
-// 导出
-// ─────────────────────────────────────────────
-// ESM
 export { searchCommits, searchAPI, commitListAPI };
-
-// CommonJS（如需要，取消注释）
-// module.exports = { searchCommits, searchAPI, commitListAPI };
-
-
-// ─────────────────────────────────────────────
-// 使用示例
-// ─────────────────────────────────────────────
-/*
-const commits = await searchCommits({
-  owner:      "your-org",
-  repo:       "your-repo",
-  token:      process.env.GITHUB_TOKEN,
-  searchPath: "data/",
-  tag:        NEW_TAG,
-  perPage:    PER_PAGE,
-});
-
-console.log(commits);
-// [
-//   {
-//     sha:     "abc123...",
-//     hash:    "a1b2c3d4e5f6...",
-//     path:    "/data/a1/b2/c3d4e5f6....md",
-//     date:    "2025-06-01T12:00:00Z",
-//     author:  "Alice",
-//     message: "${NEW_TAG}: a1b2c3d4e5f6...",
-//     source:  "search"  // 或 "recent"
-//   },
-//   ...
-// ]
-*/

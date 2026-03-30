@@ -1,9 +1,6 @@
 import { generateJWT } from '@/common'
 import {normalizeGitHubPath} from "@/common";
 import {batchGetFileContents} from "@/durable/github/githubGetContent";
-import { KV_META_DEFAULTS, KV_META_KEYS } from "@/durable/repository/SqliteRepository";
-
-import {type VaultMetaInfo} from "@/types/provider";
 
 interface InstallationDataResponse {
   token: string;
@@ -487,99 +484,6 @@ export async function getDirectoryTopFiles(
 
     return results;
 }
-
-export async function fetchVaultMetaInfo(
-  githubUserName: string,
-  githubRepoName: string,
-  vaultPathInRepo: string,
-  vaultName: string,
-  accessToken: string
-): Promise<VaultMetaInfo> {
-  //Step 1: Get the vault root directory list (single layer, 1 request)
-  const vaultPath = `${vaultPathInRepo}/${vaultName}`;
-  const folderListBefore = await getRepoFileList(githubUserName, githubRepoName, vaultPath, accessToken);
-  //folderList filters out .gitkeep files
-  const folderList = folderListBefore.filter(folder => !folder.endsWith('.gitkeep'));
-
-  if (folderList.length === 0) {
-    const defaults = Object.fromEntries(
-      KV_META_DEFAULTS.map(({ key, value }) => [key, value])
-    );
-    return {
-      folderIndexInVault: defaults[KV_META_KEYS.FOLDER_INDEX_IN_VAULT],
-      fileIndexInFolder: defaults[KV_META_KEYS.FILE_INDEX_IN_FOLDER],
-      currentTitleIndexCount: defaults[KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT],
-      indexOfTitleIndexFiles: defaults[KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES],
-      markdownFileList: [],
-      lastTitleIndexFileContentLines: []
-    };
-  }
-
-  //Filter out the TitleIndex folder and N_Folder folder
-  const folderPattern = /(?:^|\/)(\d+)_Folder$/;
-  const titleIndexList: string[] = [];
-  const filteredFolderList: string[] = [];
-  for (const item of folderList) {
-    if (item.endsWith('/TitleIndex') || item === 'TitleIndex') {
-      titleIndexList.push(item);
-    } else if (folderPattern.test(item)) {
-      filteredFolderList.push(item);
-    }
-  }
-
-  //Sort folder list
-  filteredFolderList.sort((a, b) => parseInt(a) - parseInt(b));
-
-  //folderIndexInVault: index of the last folder
-  const folderIndexInVault = filteredFolderList.length > 0 ? String(filteredFolderList.length - 1) : "0";
-
-  //Step 2: Parallel request -obtain the file list of the last Folder and the file list of TitleIndex at the same time
-  const lastFolder = filteredFolderList.length > 0
-    ? filteredFolderList[filteredFolderList.length - 1]
-    : null;
-  const titleIndexFolder = titleIndexList.length === 1 ? titleIndexList[0] : null;
-
-  const [lastFolderFiles, titleIndexFiles] = await Promise.all([
-    lastFolder
-      ? getRepoFileList(githubUserName, githubRepoName, lastFolder, accessToken, { filesOnly: true })
-      : Promise.resolve([]),
-    titleIndexFolder
-      ? getRepoFileList(githubUserName, githubRepoName, titleIndexFolder, accessToken, { filesOnly: true })
-      : Promise.resolve([]),
-  ]);
-
-  //Filter out markdown files for lastFolderFiles
-  const markdownFileList = lastFolderFiles.filter(file => file.endsWith('.md'));
-  const fileIndexInFolder = markdownFileList.length > 0 ? String(markdownFileList.length - 1) : "-1";
-
-  //TitleIndex related
-  let currentTitleIndexCount = "0";
-  const indexOfTitleIndexFiles = titleIndexFiles.length > 0 ? String(titleIndexFiles.length - 1) : "0";
-
-  let lastTitleIndexFileContentLines : string[] = [];
-  if (titleIndexFiles.length > 0) {
-    //Sort in ascending order and get the last item
-    titleIndexFiles.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-    const lastTitleIndexFile = titleIndexFiles[titleIndexFiles.length - 1];
-
-    //Step 3: Get the content of the last TitleIndex file and parse NDJSON (1 request)
-    const lastTitleIndexFileContent = await getFileContent(githubUserName, githubRepoName, lastTitleIndexFile, accessToken);
-    lastTitleIndexFileContentLines = lastTitleIndexFileContent
-      .split('\n')
-      .filter((line: string) => line.trim() !== '');
-    currentTitleIndexCount = lastTitleIndexFileContentLines.length > 0 ? String(lastTitleIndexFileContentLines.length - 1) : "-1";
-  }
-
-  return {
-    folderIndexInVault,
-    fileIndexInFolder,
-    currentTitleIndexCount,
-    indexOfTitleIndexFiles,
-    markdownFileList,
-    lastTitleIndexFileContentLines
-  };
-}
-
 
 export async function getDefaultBranchFromGitHubAPI(owner: string, repo: string, token: string): Promise<string> {
   const url = `https://api.github.com/repos/${owner}/${repo}`;

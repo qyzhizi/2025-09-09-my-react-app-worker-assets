@@ -5,9 +5,7 @@
 
 import { NotFoundError } from "@/types/error";
 import type {
-    TitleIndex,
     ArticleContent,
-    InsertTitleIndexParams,
     InsertArticleContentParams,
     UpdateArticleContentParams,
     InsertResult,
@@ -15,45 +13,14 @@ import type {
 
 import { v4 as uuidv4 } from "uuid";
 
-/** Centralized kvMeta key constants to avoid hardcoded strings scattered across the codebase */
-export const KV_META_KEYS = {
-    INITIALIZED: 'initialized',
-    FOLDER_INDEX_IN_VAULT: 'folderIndexInVault',
-    FILE_INDEX_IN_FOLDER: 'fileIndexInFolder',
-    INDEX_OF_TITLE_INDEX_FILES: 'indexOfTitleIndexFiles',
-    CURRENT_TITLE_INDEX_COUNT: 'currentTitleIndexCount',
-} as const;
-
-/** Default initial key-value pairs of the kvMeta table */
-export const KV_META_DEFAULTS: ReadonlyArray<{ key: string; value: string }> = [
-    { key: KV_META_KEYS.INITIALIZED, value: 'true' },
-    { key: KV_META_KEYS.FOLDER_INDEX_IN_VAULT, value: '0' },
-    { key: KV_META_KEYS.FILE_INDEX_IN_FOLDER, value: '-1' },
-    { key: KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES, value: '0' },
-    { key: KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT, value: '-1' },
-];
-
-/**
- * Insert the default initial values of kvMeta into the specified SQL instance
- * @param sql - SQLite instance of Cloudflare Durable Object
- */
-export function insertKvMetaDefaults(sql: any): void {
-    const valueClauses = KV_META_DEFAULTS
-        .map(({ key, value }) => `('${key}', '${value}')`)
-        .join(',\n                   ');
-    sql.exec(`
-            INSERT INTO kvMeta (key, value)
-            VALUES ${valueClauses}
-        `);
-}
 
 export class SqliteRepository {
     private sql: any;
     private maxArticlesToStore: number;
-    private static readonly MAX_ENTRIES = 30000;
+    // private static readonly MAX_ENTRIES = 30000;
 
     /** All table names that need counter tracking */
-    private static readonly COUNTED_TABLES = ['titleIndex', 'articleContent', 'titleIndexCache'] as const;
+    private static readonly COUNTED_TABLES = ['articleContent'] as const;
 
     constructor(sql: any, maxArticlesToStore: number = 1000) {
         this.sql = sql;
@@ -119,39 +86,6 @@ export class SqliteRepository {
 
         // Initialize count table data
         this.initializeCounters('ignore');
-
-        // Create title index table and add last_access field for LRU cache
-        this.sql.exec(`
-            CREATE TABLE IF NOT EXISTS titleIndex (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                hashOfTitle TEXT NOT NULL UNIQUE,
-                remoteArticlePath TEXT NOT NULL,
-                createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                last_access INTEGER DEFAULT (cast(strftime('%s','now') as int))
-            );
-        `);
-
-        // Create an index for hashOfTitle to speed up queries
-        this.sql.exec(`
-            CREATE INDEX IF NOT EXISTS idx_hashOfTitle ON titleIndex(hashOfTitle);
-        `);
-
-        // Create an index for (last_access, id) to support LRU cache eviction, (last_access, id) is a covering index, so that the query does not return the table at all
-        this.sql.exec(`
-            CREATE INDEX IF NOT EXISTS idx_last_access_id ON titleIndex (last_access, id);
-        `);
-
-        // Create titleIndexCache table for push to github repo, when counts exceed CACHE_COUNT_THRESHOLD, the content of titleIndexCache will be cleared and the content will be push to github repo
-        this.sql.exec(`
-            CREATE TABLE IF NOT EXISTS titleIndexCache (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                hashOfTitle TEXT NOT NULL UNIQUE,
-                remoteArticlePath TEXT NOT NULL,
-                createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
 
         // Create article content table
         this.sql.exec(`
@@ -240,314 +174,6 @@ export class SqliteRepository {
         );
     }
 
-    /**
-     * Private method: LRU cache eviction
-     * When the number of records in the titleIndex table exceeds MAX_ENTRIES, delete the least recently accessed records
-     */
-    private async evictIfNeeded(): Promise<void> {
-        const totalCount = this.getTableCount('titleIndex');
-
-        if (totalCount >= SqliteRepository.MAX_ENTRIES) {
-            const toDelete = totalCount - SqliteRepository.MAX_ENTRIES + 1;
-
-            // Delete the least recently accessed records
-            this.sql.exec(
-                `
-                DELETE FROM titleIndex
-                WHERE id IN (
-                    SELECT id FROM titleIndex
-                    ORDER BY last_access ASC
-                    LIMIT ?
-                )`,
-                toDelete
-            );
-
-            // Update count table
-            this.decrementTableCount('titleIndex', toDelete);
-
-            console.log(
-                `deleted ${toDelete} least recently accessed records to maintain the limit of ${SqliteRepository.MAX_ENTRIES} entries`
-            );
-        }
-    }
-
-    /**
-     * Insert a new title record into the titleIndex table
-     * Also check whether the MAX_ENTRIES limit is exceeded, and if so, delete the oldest record through LRU
-     */
-    async insertTitleIndex(params: InsertTitleIndexParams): Promise<InsertResult> {
-        const { title, hashOfTitle, remoteArticlePath, createdAt } = params;
-        const id = uuidv4();
-
-        // Check if a record with the same hashOfTitle already exists
-        const existing = this.sql.exec(
-            `SELECT 1 FROM titleIndex WHERE hashOfTitle = ? LIMIT 1`,
-            hashOfTitle
-        );
-        const existsArray = this.convertCursorToArray(existing);
-        const isNew = existsArray.length === 0;
-
-        if (createdAt) {
-            // Use the provided createdAt value (e.g. from GitHub title index file)
-            this.sql.exec(
-                `
-                INSERT INTO titleIndex (id, title, hashOfTitle, remoteArticlePath, createdAt)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(hashOfTitle) DO UPDATE SET
-                    remoteArticlePath = excluded.remoteArticlePath,
-                    last_access = cast(strftime('%s','now') as int)
-                `,
-                id, title, hashOfTitle, remoteArticlePath, createdAt
-            );
-        } else {
-            // Use SQLite DEFAULT CURRENT_TIMESTAMP
-            this.sql.exec(
-                `
-                INSERT INTO titleIndex (id, title, hashOfTitle, remoteArticlePath)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(hashOfTitle) DO UPDATE SET
-                    remoteArticlePath = excluded.remoteArticlePath,
-                    last_access = cast(strftime('%s','now') as int)
-                `,
-                id, title, hashOfTitle, remoteArticlePath
-            );
-        }
-
-        // Only increment count if a new row was actually inserted (not updated)
-        if (isNew) {
-            this.incrementTableCount('titleIndex', 1);
-        }
-
-        // Check whether the LRU cache limit is exceeded
-        await this.evictIfNeeded();
-
-        return { id };
-    }
-
-    /**
-     * Batch insert multiple title records into the titleIndex table.
-     * More efficient than calling insertTitleIndex individually because:
-     * - Counter is updated once with the total count
-     * - evictIfNeeded is called only once at the end
-     * - Supports optional createdAt per entry (preserves original timestamps from GitHub)
-     *
-     * @param paramsList - Array of InsertTitleIndexParams (with optional createdAt)
-     * @returns Array of InsertResult with generated ids
-     */
-    async batchInsertTitleIndex(
-        paramsList: InsertTitleIndexParams[]
-    ): Promise<InsertResult[]> {
-        if (paramsList.length === 0) {
-            return [];
-        }
-
-        const results: InsertResult[] = [];
-        let insertedCount = 0;
-
-        // Process one by one because each entry may or may not have createdAt,
-        // and we need to check for duplicates via hashOfTitle (UPSERT).
-        // SQLite has a default SQLITE_MAX_VARIABLE_NUMBER limit (typically 999).
-        // Each row uses 4-5 placeholders, so process in chunks of 200 rows.
-        const CHUNK_SIZE = 200;
-
-        for (let i = 0; i < paramsList.length; i += CHUNK_SIZE) {
-            const chunk = paramsList.slice(i, i + CHUNK_SIZE);
-
-            // Separate entries with and without createdAt for different SQL statements
-            const withCreatedAt: Array<{ id: string; title: string; hashOfTitle: string; remoteArticlePath: string; createdAt: string }> = [];
-            const withoutCreatedAt: Array<{ id: string; title: string; hashOfTitle: string; remoteArticlePath: string }> = [];
-
-            for (const params of chunk) {
-                const id = uuidv4();
-                results.push({ id });
-                if (params.createdAt) {
-                    withCreatedAt.push({ id, title: params.title, hashOfTitle: params.hashOfTitle, remoteArticlePath: params.remoteArticlePath, createdAt: params.createdAt });
-                } else {
-                    withoutCreatedAt.push({ id, title: params.title, hashOfTitle: params.hashOfTitle, remoteArticlePath: params.remoteArticlePath });
-                }
-            }
-
-            // Batch insert entries WITH createdAt
-            if (withCreatedAt.length > 0) {
-                const placeholders = withCreatedAt.map(() => '(?, ?, ?, ?, ?)').join(', ');
-                const bindValues = withCreatedAt.flatMap(({ id, title, hashOfTitle, remoteArticlePath, createdAt }) =>
-                    [id, title, hashOfTitle, remoteArticlePath, createdAt]
-                );
-                this.sql.exec(
-                    `INSERT OR IGNORE INTO titleIndex (id, title, hashOfTitle, remoteArticlePath, createdAt) VALUES ${placeholders}`,
-                    ...bindValues
-                );
-                insertedCount += withCreatedAt.length;
-            }
-
-            // Batch insert entries WITHOUT createdAt (use DEFAULT CURRENT_TIMESTAMP)
-            if (withoutCreatedAt.length > 0) {
-                const placeholders = withoutCreatedAt.map(() => '(?, ?, ?, ?)').join(', ');
-                const bindValues = withoutCreatedAt.flatMap(({ id, title, hashOfTitle, remoteArticlePath }) =>
-                    [id, title, hashOfTitle, remoteArticlePath]
-                );
-                this.sql.exec(
-                    `INSERT OR IGNORE INTO titleIndex (id, title, hashOfTitle, remoteArticlePath) VALUES ${placeholders}`,
-                    ...bindValues
-                );
-                insertedCount += withoutCreatedAt.length;
-            }
-        }
-
-        console.log(`Batch inserted ${insertedCount} title index record(s) (some may have been skipped due to duplicates)`);
-
-        // Update count table once for all inserts (use INSERT OR IGNORE, so actual inserted may be fewer)
-        // For accuracy we could query the real count, but for efficiency we use the upper bound
-        // and the counter will self-correct on next reset/init
-        this.incrementTableCount('titleIndex', insertedCount);
-
-        // Check whether the LRU cache limit is exceeded (once after all inserts)
-        await this.evictIfNeeded();
-
-        return results;
-    }
-
-    /**
-     * Insert a new title record into the titleIndexCache table (used for pushing to github repo, not involved in LRU eviction)
-     * @returns InsertResult with id in titleIndexCache
-     */
-     async insertTitleIndexCache(params: InsertTitleIndexParams): Promise<InsertResult> {
-        console.log(`Inserting into titleIndexCache: title="${params.title}", hashOfTitle="${params.hashOfTitle}", remoteArticlePath="${params.remoteArticlePath}"`);
-
-        const { title, hashOfTitle, remoteArticlePath } = params;
-        // if title is '' or null or undefined, throw error
-        if (!title) {
-            throw new Error('Title is required');
-        }
-
-        const id = uuidv4();
-
-        const cursor = this.sql.exec(
-            `
-            INSERT OR IGNORE INTO titleIndexCache (id, title, hashOfTitle, remoteArticlePath)
-            VALUES (?, ?, ?, ?)
-            `,
-            id, title, hashOfTitle, remoteArticlePath
-        );
-        // Only increment count if a new row was actually inserted
-        // rowsWritten includes index writes, so it may be > 1 for a single INSERT
-        console.log(`titleIndexCache insert result:`, cursor, `rowsWritten: ${cursor.rowsWritten}`)
-        if (cursor.rowsWritten > 0) {
-            console.log(`Inserted record into titleIndexCache with id=${id}, title="${title}"`);
-            this.incrementTableCount('titleIndexCache', 1);
-        }
-
-        return { id };
-    }
-
-    /**
-     * Clear all records from the titleIndexCache table
-     * Called after the cache content has been pushed to the github repo
-     * @returns the number of deleted records
-     */
-    clearTitleIndexCache(): number {
-        const [first] = this.sql.exec(`SELECT COUNT(*) as count FROM titleIndexCache`);
-        const count = first?.count || 0;
-
-        this.sql.exec(`DELETE FROM titleIndexCache`);
-        // Update count table
-        this.decrementTableCount('titleIndexCache', count);
-
-        console.log(`Cleared ${count} records from titleIndexCache`);
-        return count;
-    }
-
-    /**
-     * Query title record by hashOfTitle
-     * Accessing updates the last_access time (LRU cache mechanism)
-     */
-    async queryTitleIndexByHash(hashOfTitle: string): Promise<TitleIndex | null> {
-        const result = this.sql.exec(
-            `
-            SELECT id, title, hashOfTitle, remoteArticlePath, createdAt, last_access
-            FROM titleIndex
-            WHERE hashOfTitle = ?
-            LIMIT 1
-            `,
-            hashOfTitle
-        );
-
-        const resultArray = this.convertCursorToArray(result);
-
-        if (resultArray.length > 0) {
-            const record = resultArray[0] as TitleIndex;
-            // Accessing updates the last_access time (LRU cache mechanism)
-            this.updateLastAccess(record.id);
-            return record;
-        }
-
-        return null;
-    }
-
-    /**
-     * Query title record by ID
-     * Accessing updates the last_access time (LRU cache mechanism)
-     */
-    async queryTitleIndexById(id: string): Promise<TitleIndex | null> {
-        const result = this.sql.exec(
-            `
-            SELECT id, title, hashOfTitle, remoteArticlePath, createdAt, last_access
-            FROM titleIndex
-            WHERE id = ?
-            LIMIT 1
-            `,
-            id
-        );
-
-        const resultArray = this.convertCursorToArray(result);
-
-        if (resultArray.length > 0) {
-            const record = resultArray[0] as TitleIndex;
-            // Accessing updates the last_access time (LRU cache mechanism)
-            this.updateLastAccess(id);
-            return record;
-        }
-
-        return null;
-    }
-
-    /**
-     * Query all title records (in reverse order of creation time)
-     */
-    async getAllTitleIndex(): Promise<TitleIndex[]> {
-        const result = this.sql.exec(`
-            SELECT id, title, hashOfTitle, remoteArticlePath, createdAt, last_access
-            FROM titleIndex
-            ORDER BY createdAt DESC
-        `);
-
-        return this.convertCursorToArray(result) as TitleIndex[];
-    }
-
-    /**
-     * Get title record count (O(1) time complexity)
-     */
-    async getTitleIndexCount(): Promise<number> {
-        return this.getTableCount('titleIndex');
-    }
-
-    async getTitleIndexCacheCount(): Promise<number> {
-        return this.getTableCount('titleIndexCache');
-    }
-
-    /**
-     * Get all records from the titleIndexCache table (in order of creation time)
-     * Used to batch-push cached title index entries to GitHub
-     */
-    getAllTitleIndexCache(): Array<{ id: string; title: string; hashOfTitle: string; remoteArticlePath: string; createdAt: string }> {
-        const result = this.sql.exec(`
-            SELECT id, title, hashOfTitle, remoteArticlePath, createdAt
-            FROM titleIndexCache
-            ORDER BY createdAt ASC
-        `);
-        return this.convertCursorToArray(result);
-    }
-
     // ===================== articleContent  =====================
 
     /**
@@ -622,7 +248,7 @@ export class SqliteRepository {
                 throw new Error(`Invalid content: ${content}`);
             }
             // Each record gets baseTime + idx milliseconds, formatted as ISO 8601 string
-            const createdAt = new Date(baseTime + idx).toISOString().replace('T', ' ').replace('Z', '');
+            const createdAt = new Date(baseTime - idx).toISOString().replace('T', ' ').replace('Z', '');
             prepared.push({ id: uuidv4(), title, content, createdAt });
         }
 
@@ -811,30 +437,6 @@ export class SqliteRepository {
     // ===================== Cascading Delete Operations =====================
 
     /**
-     * Delete title record
-     * No longer automatically delete associated article content
-     */
-    async deleteTitleIndex(idOfTitleIndex: string): Promise<void> {
-        const result = this.sql.exec(
-            `
-            DELETE FROM titleIndex
-            WHERE id = ?
-            `,
-            idOfTitleIndex
-        );
-
-        // Check if any row was deleted (using changes property)
-        if (result.changes === 0) {
-            throw new NotFoundError(
-                `Title index with id=${idOfTitleIndex} not found`
-            );
-        }
-
-        // Update count table
-        this.decrementTableCount('titleIndex', 1);
-    }
-
-    /**
      * Delete a single article content
      */
     async deleteArticleContent(id: string): Promise<void> {
@@ -981,32 +583,12 @@ export class SqliteRepository {
             // Validate counter accuracy
             const validationResults: any[] = [];
             countersArray.forEach((counter: any) => {
-                if (counter.tableName === 'titleIndex') {
-                    const actualCount = this.sql.exec(`SELECT COUNT(*) as count FROM titleIndex`);
-                    const actualCountArray = this.convertCursorToArray(actualCount);
-                    
-                    validationResults.push({
-                        tableName: 'titleIndex',
-                        counterValue: counter.count,
-                        actualCount: actualCountArray[0]?.count,
-                        isValid: counter.count === actualCountArray[0]?.count
-                    });
-                } else if (counter.tableName === 'articleContent') {
+                if (counter.tableName === 'articleContent') {
                     const actualCount = this.sql.exec(`SELECT COUNT(*) as count FROM articleContent`);
                     const actualCountArray = this.convertCursorToArray(actualCount);
                     
                     validationResults.push({
                         tableName: 'articleContent',
-                        counterValue: counter.count,
-                        actualCount: actualCountArray[0]?.count,
-                        isValid: counter.count === actualCountArray[0]?.count
-                    });
-                } else if (counter.tableName === 'titleIndexCache') {
-                    const actualCount = this.sql.exec(`SELECT COUNT(*) as count FROM titleIndexCache`);
-                    const actualCountArray = this.convertCursorToArray(actualCount);
-
-                    validationResults.push({
-                        tableName: 'titleIndexCache',
                         counterValue: counter.count,
                         actualCount: actualCountArray[0]?.count,
                         isValid: counter.count === actualCountArray[0]?.count
@@ -1028,52 +610,6 @@ export class SqliteRepository {
     }
 
     /**
-     * Get recent access records (LRU cache debugging)
-     */
-    debugGetRecentAccess(): any {
-        try {
-            const result: any = {
-                section: "LRU Cache Status",
-                success: true,
-                data: {}
-            };
-            
-            const recentAccess = this.sql.exec(`
-                SELECT id, title, last_access, 
-                       datetime(last_access, 'unixepoch') as last_access_time,
-                       createdAt
-                FROM titleIndex 
-                ORDER BY last_access DESC 
-                LIMIT 10
-            `);
-            
-            const recentAccessArray = this.convertCursorToArray(recentAccess);
-            result.data.recentAccess = recentAccessArray;
-            
-            const oldestAccess = this.sql.exec(`
-                SELECT id, title, last_access,
-                       datetime(last_access, 'unixepoch') as last_access_time,
-                       createdAt
-                FROM titleIndex 
-                ORDER BY last_access ASC 
-                LIMIT 5
-            `);
-            
-            const oldestAccessArray = this.convertCursorToArray(oldestAccess);
-            result.data.oldestAccess = oldestAccessArray;
-            
-            return result;
-            
-        } catch (error) {
-            return {
-                section: "LRU Cache Status",
-                success: false,
-                error: error instanceof Error ? error.message : String(error)
-            };
-        }
-    }
-
-    /**
      * Get complete database status debugging information
      */
     getDODBStatus(): any {
@@ -1085,7 +621,6 @@ export class SqliteRepository {
         // Collect all debugging information
         debugResult.sections.tables = this.debugGetAllTables();
         debugResult.sections.counters = this.debugGetTableCounters();
-        debugResult.sections.lruCache = this.debugGetRecentAccess();
         debugResult.sections.kvMeta = this.getAllKvMeta();
 
         return debugResult;
@@ -1149,9 +684,8 @@ export class SqliteRepository {
      * Reset kvMeta to default initial values
      * Clears all existing kvMeta entries and inserts the default key-value pairs
      */
-    resetKvMetaToDefaults(): void {
+    deleteAllKv(): void {
         this.sql.exec(`DELETE FROM kvMeta`);
-        insertKvMetaDefaults(this.sql);
     }
 
     // Reset all tables
@@ -1164,24 +698,23 @@ export class SqliteRepository {
             };
 
             // Delete all data from the tables, preserving structure and indexes
-            this.sql.exec(`DELETE FROM titleIndex`);
+            // this.sql.exec(`DELETE FROM titleIndex`);
             this.sql.exec(`DELETE FROM articleContent`);
 
             // Reinitialize counters
             this.initializeCounters('reset');
 
             // reset titleIndexCache 
-            this.sql.exec(`DELETE FROM titleIndexCache`);
+            // this.sql.exec(`DELETE FROM titleIndexCache`);
 
-            // Reset kvMeta file indices to initial values
-            this.resetKvMetaToDefaults();
+            this.deleteAllKv();
 
-            result.data.deletedTables = ['titleIndex', 'articleContent', 'titleIndexCache'];
+            result.data.deletedTables = [ 'articleContent'];
             result.data.preservedStructures = [
                 'Table structure fully preserved',
-                'Index structure fully preserved: idx_hashOfTitle, idx_last_access_id, idx_title',
+                'Index structure fully preserved: idx_title',
                 'Counter has been reset to 0',
-                'kvMeta file indices reset to initial values (folderIndex=0, fileIndex=-1)'
+                'kvMeta file indices reset to initial values'
             ];
 
             return result;

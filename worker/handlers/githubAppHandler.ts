@@ -1,9 +1,10 @@
 import type { Context } from "hono";
-import { getInstallationRepositories, getRepoFileList, getFileContent} from '@/durable/github/githubApp'
-
+import { getInstallationRepositories,
+  getDefaultBranchFromGitHubAPI,
+} from '@/durable/github/githubApp'
 import {
-  resetDoKeyStorageAndSqlite,
   durableSearchCommits,
+  duableSwitchAndInitVault,
 } from "@/durable/callDurable"
 import { getUserSettingsFromDb, updateUserSettingsToDb } from "@/infrastructure/userSettings";
 import { safeUpdategithubRepoAccessByUserId,
@@ -15,7 +16,7 @@ import {getOrUpdategithubRepoAccessInfo} from "@/providers"
 import {testGitHubRepoAcess} from "@/providers"
 import { getRepoVaultMetaInfo } from "@/providers";
 import {type GithubRepoAccess} from "@/infrastructure/types";
-import { NEW_TAG, PER_PAGE, MAX_SEARCH_PAGES } from "@/ConstVar";
+import { PER_PAGE } from "@/ConstVar";
 
 const DEFAULT_SEARCH_COMMITS_THRESHOLD = 100;
 
@@ -50,9 +51,9 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
 
     let githubAccessInfo;
     try {
-        githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
+      githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
     } catch (TokenExpiredError) {
-        return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401)
+      return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401);
     }
     if (!githubAccessInfo || !githubAccessInfo.accessToken){
       throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!")
@@ -61,18 +62,37 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     const dbGithubUserName = githubAccessInfo.githubUserName
     const dbGithubRepoName = githubAccessInfo.githubRepoName
     const dbVaultPathInRepo = githubAccessInfo.vaultPathInRepo
+    const dbVaultName = githubAccessInfo.vaultName // have default value in DB, won't be empty
+    let dbBranch = githubAccessInfo.branch
     if (!dbGithubUserName ) {
       throw new NotGetAccessTokenError("Fail to get GitHub username, Please login GitHub first, then try again!")
     }
     if (githubUserName !== dbGithubUserName ) {
-      console.log({githubUserName, dbGithubUserName})
       throw new NotGetAccessTokenError(" Input is inconsistent with DB  , Please login GitHub first, then try again!")
+    }
+    if (!dbBranch) {
+      console.warn("Branch info is not in DB, will use default branch when init vault")
+      // get default branch from GitHub API
+      dbBranch = await getDefaultBranchFromGitHubAPI(githubUserName, githubRepoName, accessToken)
+      console.log("Default branch from GitHub API: ", dbBranch)
+      // save branch info to DB
+      await safeUpdategithubRepoAccessByUserId(c, { branch: dbBranch });
     }
     let durableIsReset = false
     if (vaultPathInRepo !== dbVaultPathInRepo || githubRepoName !== dbGithubRepoName) {
       console.warn("vaultPathInRepo or githubRepoName is different from DB!")
       // reset durable object storage and sqlite to avoid potential issue caused by inconsistent repoName or vaultPathInRepo
-      await resetDoKeyStorageAndSqlite(c)
+      await duableSwitchAndInitVault(
+        c,
+        {
+          githubUserName,
+          githubRepoName,
+          vaultPathInRepo,
+          vaultName: dbVaultName,
+          accessToken,
+          branch: dbBranch,
+        },
+      )
       durableIsReset = true
     }
 
@@ -139,65 +159,6 @@ export async function getGitHubAppInstallationReposHandler(c:Context<{Bindings: 
   return c.json({installationData})
 }
 
-export async function getRepoFileListHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
-    let githubAccessInfo;
-    try {
-        githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
-    } catch (TokenExpiredError) {
-        return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401)
-    }
-    const githubRepoName = githubAccessInfo?.githubRepoName ?? null
-    const githubUserName = githubAccessInfo?.githubUserName ?? null
-    const vaultPathInRepo = githubAccessInfo?.vaultPathInRepo ?? null
-    const vaultName = githubAccessInfo?.vaultName ?? null
-    const accessToken = githubAccessInfo?.accessToken ?? null
-    if (!githubRepoName || !githubUserName || !vaultPathInRepo || !accessToken) {
-        return c.json({ error: 'GitHub repository information is incomplete, Please set GitHub repo info first!' }, 400)
-    }
-    // vaultPathInRepo/vaultName
-    const path = `${vaultPathInRepo}/${vaultName}`
-    const folderList = await getRepoFileList(githubUserName, githubRepoName, path, accessToken)
-    if (folderList.length === 0) {
-      return c.json({folderList: [], fileList: []})
-    }
-    //Filter out the TitleIndex folder (there may be multiple, take the last one), and other folder lists, and sort other folder lists
-    const { titleIndexList, filteredFolderList } = folderList.reduce((acc, item) => {
-        if (item.endsWith('/TitleIndex') || item === 'TitleIndex') acc.titleIndexList.push(item)
-        else acc.filteredFolderList.push(item)
-        return acc
-        }, { titleIndexList: [] as string[], filteredFolderList: [] as string[] })
-    //Sorted list of folders (markdown files inside)
-    filteredFolderList.sort((a, b) => a.localeCompare(b))
-    //Assert that the length of titleIndexList is 1, take the last element
-    if (titleIndexList.length !== 1) {
-        throw new Error('TitleIndex list is not valid')
-    }
-    const titleIndexFolder = titleIndexList[0]
-
-    //Get the file list and TitleIndex file list of the last folder in parallel
-    const [fileList, titleIndexFileList] = await Promise.all([
-      getRepoFileList(githubUserName, githubRepoName, filteredFolderList.slice(-1)[0], accessToken, { filesOnly: true }),
-      getRepoFileList(githubUserName, githubRepoName, titleIndexFolder, accessToken, { filesOnly: true }),
-    ])
-
-    //Sort titleIndexFileList in ascending order and get the last item
-    titleIndexFileList.sort((a, b) => a.localeCompare(b))
-    const lastTitleIndexFile = titleIndexFileList.slice(-1)[0]
-
-    //get content of lastTitleIndexFile, and parse it in json format (NDJSON: one JSON object per line)
-    const lastTitleIndexFileContent = await getFileContent(githubUserName, githubRepoName, `${lastTitleIndexFile}`, accessToken)
-    console.log("lastTitleIndexFileContent: ", lastTitleIndexFileContent)
-    const lastTitleIndexFileJson = lastTitleIndexFileContent
-      .split('\n')
-      .filter((line: string) => line.trim() !== '')
-      .map((line: string) => JSON.parse(line))
-
-
-    return c.json({folderList: folderList, filteredFolderList: filteredFolderList, fileList: fileList, titleIndexFileList: titleIndexFileList, lastTitleIndexFile: lastTitleIndexFile, lastTitleIndexFileContent: lastTitleIndexFileJson, 
-    lengthOfLastTitleIndex: lastTitleIndexFileJson.length
-    })
-}
-
 export async function getRepoVaultMetaInfoHandler(c:Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>) {
     const vaultMetaInfo = await getRepoVaultMetaInfo(c);
     return c.json({ vaultMetaInfo });
@@ -205,7 +166,7 @@ export async function getRepoVaultMetaInfoHandler(c:Context<{ Bindings: Env, Var
 
 export async function searchCommitsHandler(c:Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   const thresholdParam = c.req.query("threshold");
-  const tag = c.req.query("tag");
+  const commitFilter = c.req.query("commitFilter");
   let threshold: number;
   if (thresholdParam === undefined || thresholdParam === "") {
     threshold = DEFAULT_SEARCH_COMMITS_THRESHOLD;
@@ -242,14 +203,13 @@ export async function searchCommitsHandler(c:Context<{ Bindings: Env, Variables:
   if (!vaultPathInRepo || vaultPathInRepo.trim() === '') {
     return c.json({ error: 'Empty vaultPathInRepo in githubAccessInfo' }, 400);
   }
-  console.log("accessToken: ", githubAccessInfo.accessToken)
   const commits = await durableSearchCommits(c, {
     githubUserName: githubAccessInfo.githubUserName,
-    repoName: githubAccessInfo.githubRepoName,
+    githubRepoName: githubAccessInfo.githubRepoName,
     accessToken: githubAccessInfo.accessToken,
     threshold: threshold,
     searchPath: `${vaultPathInRepo}/${vaultName}/`,
-    tag: tag,
+    commitFilter: commitFilter,
     perPage: PER_PAGE,
   })
   return c.json({ commits });

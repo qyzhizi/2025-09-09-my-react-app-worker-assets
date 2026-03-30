@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { NotFoundError, ValidationError } from "@/types/error"
-import { NEW_TAG, PER_PAGE } from "@/ConstVar";
+import { COMMITFILTER, PER_PAGE } from "@/ConstVar";
 
 const DURABLE_NAME_PREFIX = 'MemoflowDO_'
 
@@ -66,19 +66,19 @@ export const durablePushToGitHub = async (c: Context,
 export const durableSearchCommits = async (c: Context,
     {
         githubUserName,
-        repoName,
+        githubRepoName,
         accessToken,
         threshold,
         searchPath = "",
-        tag = NEW_TAG,
+        commitFilter = COMMITFILTER,
         perPage = PER_PAGE,
     }: {
         githubUserName: string;
-        repoName: string;
+        githubRepoName: string;
         accessToken: string;
         threshold: number;
         searchPath?: string;
-        tag?: string;
+        commitFilter?: string;
         perPage?: number;
     }): Promise<any> => {
     const doId = c.env.MY_DURABLE_OBJECT.idFromName(
@@ -88,11 +88,11 @@ export const durableSearchCommits = async (c: Context,
     try {
         const commits = await stub.searchCommits({
             githubUserName,
-            repoName,
+            githubRepoName,
             accessToken,
             threshold,
             searchPath,
-            tag,
+            commitFilter,
             perPage,
         })
         return commits
@@ -130,20 +130,36 @@ export const resetDoKeyStorageAndSqlite = async (c: Context) => {
     }
 }
 
-export const switchAndInitVault = async (c: Context,
-    githubUserName: string,
-    githubRepoName: string,
-    vaultPathInRepo: string,
-    vaultName: string,
-    branch: string,
-    accessToken: string    
+export const duableSwitchAndInitVault = async (c: Context,
+    {
+        githubUserName,
+        githubRepoName,
+        vaultPathInRepo,
+        vaultName,
+        accessToken,
+        branch,
+    }: {
+        githubUserName: string;
+        githubRepoName: string;
+        vaultPathInRepo: string;
+        vaultName: string;
+        accessToken: string;
+        branch: string;
+    }
 ) => {
     const doId = c.env.MY_DURABLE_OBJECT.idFromName(
         `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
     const stub = c.env.MY_DURABLE_OBJECT.get(doId)
 
     try {
-        await stub.switchAndInitVault(githubUserName, githubRepoName, vaultPathInRepo, vaultName, branch, accessToken)
+        await stub.switchAndInitVault({
+            githubUserName,
+            githubRepoName,
+            vaultPathInRepo,
+            vaultName,
+            accessToken,
+            branch,
+        })
     } catch (err) {
         console.error('Unexpected error in switchAndInitVault:', err)
         return c.text('Internal Server Error', 500)

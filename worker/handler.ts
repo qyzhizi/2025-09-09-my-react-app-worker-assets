@@ -4,7 +4,7 @@ import { setCookie } from "hono/cookie";
 import { sign } from "hono/jwt";
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { getInstallationRepositories, getDefaultBranchFromGitHubAPI} from '@/durable/github/githubApp'
+import { getInstallationRepositories } from '@/durable/github/githubApp'
 
 import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService'
 import {durableHello,
@@ -12,7 +12,6 @@ import {durableHello,
   durablePushToGitHub,
   getDODatabaseStatus,
   resetDoKeyStorageAndSqlite,
-  switchAndInitVault,
   getArticleContentList,
 } from "@/durable/callDurable"
 import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
@@ -25,10 +24,9 @@ import { safeUpdategithubRepoAccessByUserId,
 } from "@/infrastructure/githubRepoAccess"
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { Provider } from "@/types/provider";
-import { validateGitRepoFullName, getTitleFromContent } from "@/common"
-import { ValidationError, NotGetAccessTokenError } from "@/types/error"
+import { getTitleFromContent } from "@/common"
+import { NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
-import {testGitHubRepoAcess} from "@/providers"
 import {type GithubRepoAccess} from "@/infrastructure/types";
 
 const VALIDATION_TARGET = {
@@ -277,10 +275,13 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
 
     const taskId = nanoid()
     const now = new Date().toISOString()
-    const title = getTitleFromContent(content) 
+    let title = getTitleFromContent(content) 
+    if (!title) {
+      title = now
+    }
 
     const logEntry = {
-      message: "[NEW]: added by Memoflow",
+      message: "[NEW] by memoflow",
       content,
       created_at: now,
       taskId: taskId,
@@ -379,100 +380,7 @@ export async function getVaultInfoHandler(c: Context<{ Bindings: Env, Variables:
   return c.json({vaultName, folderIndexInVault, fileIndexInFolder})
 }
 
-export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
-  try {
-    const body = await c.req.json()
-    const { githubRepoFullName, vaultPathInRepo } = body
 
-    // verify vaultPathInRep
-    if (!vaultPathInRepo || vaultPathInRepo.trim() === '') {
-      return c.json({ error: 'Empty vaultPathInRepo' }, 400);
-    }
-    // verify vaultPathInRepo format
-    if (!/^([\w\-./]+)$/.test(vaultPathInRepo)) {
-      return c.json({ error: 'Invalid vaultPathInRepo format. Only alphanumeric characters, hyphens, underscores, dots, and slashes are allowed.' }, 400);
-    }
-    
-    // verify repoName
-    try {
-      validateGitRepoFullName(githubRepoFullName);
-    } catch (error) {
-      if (error instanceof ValidationError) {
-        return c.json({ error: error.message }, 400);
-      }
-      throw error; 
-    }
-    const [githubUserName, githubRepoName] = githubRepoFullName.split("/");
-
-    // get settings @todo validate user settings
-    const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
-    console.log("userSettings: ", userSettings)
-
-    let githubAccessInfo;
-    try {
-      githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
-    } catch (TokenExpiredError) {
-      return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401);
-    }
-    if (!githubAccessInfo || !githubAccessInfo.accessToken){
-      throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!")
-    }
-    const accessToken = githubAccessInfo.accessToken
-    const dbGithubUserName = githubAccessInfo.githubUserName
-    const dbGithubRepoName = githubAccessInfo.githubRepoName
-    const dbVaultPathInRepo = githubAccessInfo.vaultPathInRepo
-    const dbVaultName = githubAccessInfo.vaultName // have default value in DB, won't be empty
-    let dbBranch = githubAccessInfo.branch
-    if (!dbGithubUserName ) {
-      throw new NotGetAccessTokenError("Fail to get GitHub username, Please login GitHub first, then try again!")
-    }
-    if (githubUserName !== dbGithubUserName ) {
-      throw new NotGetAccessTokenError(" Input is inconsistent with DB  , Please login GitHub first, then try again!")
-    }
-    if (!dbBranch) {
-      console.warn("Branch info is not in DB, will use default branch when init vault")
-      // get default branch from GitHub API
-      dbBranch = await getDefaultBranchFromGitHubAPI(githubUserName, githubRepoName, accessToken)
-      console.log("Default branch from GitHub API: ", dbBranch)
-      // save branch info to DB
-      await safeUpdategithubRepoAccessByUserId(c, { branch: dbBranch });
-    }
-    let durableIsReset = false
-    if (vaultPathInRepo !== dbVaultPathInRepo || githubRepoName !== dbGithubRepoName) {
-      console.warn("vaultPathInRepo or githubRepoName is different from DB!")
-      // reset durable object storage and sqlite to avoid potential issue caused by inconsistent repoName or vaultPathInRepo
-      // await resetDoKeyStorageAndSqlite(c)
-      await switchAndInitVault(
-        c,
-        githubUserName,
-        githubRepoName,
-        vaultPathInRepo,
-        dbVaultName,
-        dbBranch,
-        accessToken
-      )
-      durableIsReset = true
-    }
-
-    try{
-      await safeUpdategithubRepoAccessByUserId(c, { githubRepoName, vaultPathInRepo });
-      await testGitHubRepoAcess(accessToken, githubUserName, githubRepoName);
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      return c.json({"success": "false", "error": errorMessage}, 400)
-    }
-    if (durableIsReset) {
-      console.log("Durable Object storage and sqlite reset done.")
-      return c.json({"success": `${githubUserName}/${githubRepoName} saved, durable object reset done, connecting success!`})
-    }
-    
-    return c.json({"success": `${githubUserName}/${githubRepoName} saved, connecting success!`})
-
-  } catch (error) {
-    console.log("error: ", error)
-    return c.json({error: 'Internal Server Error'}, 500);
-  }
-}
 
 export async function getGitHubRepoInfoHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   const githubAccessInfo = await getgithubRepoAccessInfo(c);

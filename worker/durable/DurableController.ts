@@ -1,35 +1,17 @@
 import { DurableObject } from "cloudflare:workers";
 import { NotFoundError, ValidationError } from "@/types/error"
 import type { Task, PushGitRepoTaskParams, PushGitRepoTaskRespon } from "@/types/durable";
-import {type VaultMetaInfo} from "@/types/provider";
-import { SqliteRepository, KV_META_KEYS, KV_META_DEFAULTS } from "@/durable/repository";
+import { SqliteRepository } from "@/durable/repository";
 
-import { getFolderPath, getTitleIndexRootPath } from "@/durable/github/githubApp";
-import {fetchVaultMetaInfo} from "@/durable/github/githubApp"
 import {batchGetFileContents} from "@/durable/github/githubGetContent";
 import { getTitleFromContent } from "@/common"
 import { createEmptyFolderPathInRepoIfNotExists } from "@/durable/github/githubApp";
 import { searchCommits } from "@/durable/github/searchCommits";
 import type { SearchCommitResult } from "@/durable/github/searchCommits";
-import { NEW_TAG, PER_PAGE } from "@/ConstVar";
+import { COMMITFILTER, PER_PAGE } from "@/ConstVar";
+import { edgeHash64 } from "@/durable/titleHash"
 
-const MAX_FILES_PER_FOLDER = 1000;
 const MAX_ARTICLES_TO_STORE = 1000;
-const MAX_SINGLE_FILE_TITLE_INDEX = 1000;
-/** After the titleIndexCache accumulates to this quantity, it will be flushed in bulk to the GitHub index file. */
-const TITLE_INDEX_CACHE_FLUSH_THRESHOLD = 5;
-
-interface FileLocationResult {
-    folderIndex: number;
-    fileIndex: number;
-    folderPath: string;
-    filePath: string;
-    needCreateFolder: boolean;
-    currentTitleIndexCount: number;
-    indexOfTitleIndexFiles: number;
-    titleIndexFilePath: string;
-    needCreateIndexFile: boolean;
-}
 
 /** A Durable Object's behavior is defined in an exported Javascript class */
 export class MyDurableObject extends DurableObject<Env> {
@@ -57,33 +39,8 @@ export class MyDurableObject extends DurableObject<Env> {
         this.sql = ctx.storage.sql;
         this.sqliteRepository = new SqliteRepository(this.sql, MAX_ARTICLES_TO_STORE);
         this.sqliteRepository.initializeTables();
-
-        // Use blockConcurrencyWhile to ensure that initialization completes before processing any RPC requests,
-        // Prevent the index from being reset or read to an uninitialized state when rebuilding after DO eviction.
-        ctx.blockConcurrencyWhile(async () => {
-            await this.initialize(false);
-        });
     }
 
-    async initialize(forceInit: boolean = false) {
-        // Read initialization token from SQLite kvMeta table (persistent, not lost by DO eviction)
-        const stored = this.sqliteRepository.getKvMeta(KV_META_KEYS.INITIALIZED);
-        if (stored !== 'true' || forceInit) {
-          // First initialization: Set the file index starting value
-          console.log("Durable Object initializing storage (writing to SQLite kvMeta)...");
-          for (const { key, value } of KV_META_DEFAULTS) {
-            this.sqliteRepository.setKvMeta(key, value);
-          }
-        } else {
-          // DO rebuild after eviction: read from SQLite (SQLite is persistent and will not be lost)
-          const folderIndex = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.FOLDER_INDEX_IN_VAULT);
-          const fileIndex = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.FILE_INDEX_IN_FOLDER);
-          const indexOfTitleIndexFiles = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES);
-          const currentTitleIndexCount = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT);
-
-          console.log("Durable Object restored from SQLite kvMeta, folderIndex:", folderIndex, "fileIndex:", fileIndex, "indexOfTitleIndexFiles:", indexOfTitleIndexFiles, "currentTitleIndexCount:", currentTitleIndexCount);
-        }
-      }
     /**
      * The Durable Object exposes an RPC method sayHello which will be invoked when when a Durable
      *  Object instance receives a request from a Worker via the same method invocation on the stub
@@ -116,7 +73,6 @@ export class MyDurableObject extends DurableObject<Env> {
             throw new ValidationError('Type Check Error: Invalid payload');
         }
 
-        // const id = crypto.randomUUID();
         const task: Task = {
             id: data.id ,
             commitMessage: data.commitMessage ?? '',
@@ -135,7 +91,6 @@ export class MyDurableObject extends DurableObject<Env> {
             throw new ValidationError('Type Check Error: Invalid payload');
         }
 
-        // const id = crypto.randomUUID();
         const params: PushGitRepoTaskParams = {
             id: data.id ,
             commitMessage: data.commitMessage ?? '',
@@ -166,131 +121,6 @@ export class MyDurableObject extends DurableObject<Env> {
         return task;
     }
 
-    async createEmptyFileInRepo(
-        accessToken: string,
-        githubUserName: string,
-        repoName: string,
-        filePath: string
-    ) {
-        // normalize file path to prevent issues with leading/trailing slashes or backslashes
-        const normalizedFilePath = filePath
-            .replace(/\\/g, '/')
-            .replace(/\/+/g, '/')
-            .replace(/^\/|\/$/g, '');
-
-        console.log("Creating empty file in repo at path:", normalizedFilePath);
-
-        const MAX_RETRIES = 3;
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            const res = await fetch(
-                `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${normalizedFilePath}`,
-                {
-                    method: 'PUT',
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                        'User-Agent': 'Hono-Worker',
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        message: `Init file ${normalizedFilePath}`,
-                        content: Buffer.from('').toString('base64'),
-                    }),
-                }
-            );
-
-            // 201 = created, 200 = updated（Idempotent）
-            if (res.ok) {
-                return;
-            }
-
-            // 409 confict can occur even if the file doesn't exist yet, because GitHub checks the branch's HEAD commit SHA for every update, and concurrent updates can cause SHA mismatches. Therefore, we should retry on 409 regardless of whether we think the file exists or not.
-            if (res.status === 409 && attempt < MAX_RETRIES - 1) {
-                console.warn(`SHA conflict (409) creating file on attempt ${attempt + 1}, retrying...`);
-                await new Promise(r => setTimeout(r, 50 * Math.pow(2, attempt)));
-                continue;
-            }
-
-            // 422 means the file already exists (race creation)
-            if (res.status === 422) {
-                console.log("File already exists (422), skipping.");
-                return;
-            }
-
-            const errorText = await res.text();
-            console.log("Failed to create file:", errorText);
-        }
-        console.error("Failed to create file after multiple attempts.");
-        throw new Error("Failed to create file after multiple attempts.");
-    }
-
-    async getNextFileLocation(params: {
-        vaultPathInRepo: string;
-        vaultName: string;
-        folderIndex: number;
-        fileIndex: number;
-        currentTitleIndexCount: number; // The current number of title indexes, used to determine whether it is necessary to switch to a new file to store title indexes
-        indexOfTitleIndexFiles: number; // The file number currently used to store the title index
-        maxFilesPerFolder: number;
-        maxSingleFileTitleIndex: number;
-    }): Promise<FileLocationResult> {
-
-        const {
-            vaultPathInRepo,
-            vaultName,
-            folderIndex,
-            fileIndex,
-            currentTitleIndexCount,
-            indexOfTitleIndexFiles,
-            maxFilesPerFolder,
-            maxSingleFileTitleIndex,
-        } = params;
-
-        let nextFolderIndex = folderIndex;
-        let nextFileIndex = fileIndex + 1;
-        let needCreateFolder = false;
-        let nextIndexOfTitleIndexFiles = indexOfTitleIndexFiles;
-        let needCreateIndexFile = false;
-        let nextCurrentTitleIndexCount = currentTitleIndexCount + 1;
-
-        // First initialization (fileIndex = -1 means the file has not been written yet)
-        if (folderIndex === 0 && fileIndex === -1) {
-            needCreateFolder = true;
-            nextFileIndex = 0;
-        }
-
-        // The number of files exceeds the limit, enter a new folder
-        if (nextFileIndex >= maxFilesPerFolder) {
-            nextFileIndex = 0;
-            nextFolderIndex++;
-            needCreateFolder = true;
-        }
-
-        // The number of title indexes exceeds the limit, enter a new file
-        if (currentTitleIndexCount > 0 && currentTitleIndexCount % maxSingleFileTitleIndex === 0) {
-            console.log("Creating new title index file", "currentTitleIndexCount:", currentTitleIndexCount, "maxSingleFileTitleIndex:", maxSingleFileTitleIndex, "indexOfTitleIndexFiles:", indexOfTitleIndexFiles);
-            needCreateIndexFile = true;
-            nextIndexOfTitleIndexFiles = (indexOfTitleIndexFiles ?? -1) + 1;
-            nextCurrentTitleIndexCount = 0; // Reset the current title index count and start counting the number of title indexes for new files
-        }
-
-        const folderPath = getFolderPath(vaultPathInRepo, vaultName, nextFolderIndex);
-        const titleIndexRootPath = getTitleIndexRootPath(vaultPathInRepo, vaultName);
-        const filePath = `${folderPath}/${nextFileIndex}.md`;
-        const titleIndexFilePath = `${titleIndexRootPath}/${nextIndexOfTitleIndexFiles}.json`;
-
-        return {
-            folderIndex: nextFolderIndex,
-            fileIndex: nextFileIndex,
-            folderPath,
-            filePath,
-            needCreateFolder,
-            currentTitleIndexCount: nextCurrentTitleIndexCount,
-            indexOfTitleIndexFiles: nextIndexOfTitleIndexFiles,
-            titleIndexFilePath,
-            needCreateIndexFile,
-        };
-    }
-
     async saveContentToDOSql(title: string, content: string): Promise<any> {
         // 参数验证
         if (title === undefined || title === null || title === '') {
@@ -309,57 +139,6 @@ export class MyDurableObject extends DurableObject<Env> {
         return { id, title };
 
 
-    }
-
-    /**
-     * Atomically allocate the next file position index and immediately write it back to the SQLite kvMeta.
-     * SQLite operations are synchronous, ensuring that no other concurrent requests can insert, thus avoiding index races.
-     */
-    private async allocateNextFileLocation(params: {
-        vaultPathInRepo: string;
-        vaultName: string;
-    }): Promise<FileLocationResult> {
-        const folder_index_in_vault = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.FOLDER_INDEX_IN_VAULT);
-        console.log("folder_index_in_vault", folder_index_in_vault);
-     
-        const file_index_in_folder = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.FILE_INDEX_IN_FOLDER);
-        console.log("file_index_in_folder", file_index_in_folder);
-
-        if (folder_index_in_vault === null) {
-            throw new Error("folderIndexInVault is missing in SQLite kvMeta");
-        }
-        if (file_index_in_folder === null) {
-            throw new Error("fileIndexInFolder is missing in SQLite kvMeta");
-        }
-
-        const currentTitleIndexCount = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT) || 0;
-        console.log("currentTitleIndexCount", currentTitleIndexCount);
-        const indexOfTitleIndexFiles = this.sqliteRepository.getKvMetaNumber(KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES) ?? -1;
-        console.log("currentTitleIndexCount", currentTitleIndexCount, "indexOfTitleIndexFiles", indexOfTitleIndexFiles);
-
-        const result: FileLocationResult = await this.getNextFileLocation({
-            vaultPathInRepo: params.vaultPathInRepo,
-            vaultName: params.vaultName,
-            folderIndex: folder_index_in_vault,
-            fileIndex: file_index_in_folder,
-            currentTitleIndexCount,
-            indexOfTitleIndexFiles,
-            maxFilesPerFolder: MAX_FILES_PER_FOLDER,
-            maxSingleFileTitleIndex: MAX_SINGLE_FILE_TITLE_INDEX,
-        });
-
-        /**
-         * Immediately write the new index back to SQLite kvMeta (synchronous operation, will not yield execution),
-         * This way, even if subsequent await fetch yields execution, other concurrent requests will read the updated index.
-         * Cost: If subsequent GitHub push fails, this file number will be "skipped", but this is harmless.
-         */
-        this.sqliteRepository.setKvMeta(KV_META_KEYS.FOLDER_INDEX_IN_VAULT, result.folderIndex);
-        this.sqliteRepository.setKvMeta(KV_META_KEYS.FILE_INDEX_IN_FOLDER, result.fileIndex);
-
-        this.sqliteRepository.setKvMeta(KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES, result.indexOfTitleIndexFiles);
-        this.sqliteRepository.setKvMeta(KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT, result.currentTitleIndexCount);
-
-        return result;
     }
 
     async processGithubPushTask(taskId: string): Promise<PushGitRepoTaskRespon> {
@@ -388,67 +167,21 @@ export class MyDurableObject extends DurableObject<Env> {
             return { "taskId": taskId, "completed": true };
         }
 
-        // ====== Step 1: Assign file index ======
-        const result: FileLocationResult = await this.allocateNextFileLocation({
-            vaultPathInRepo,
-            vaultName,
-        });
-        console.log("Determined file location:", result);
-
-        // ====== Step 2: Perform GitHub network operations (serialized through githubPushQueue, no concurrency conflicts) ======
-        /** Folder creation and index file creation write different files and can be executed concurrently;
-         * If both are triggered at the same time, a 409 may be generated, but each has internal retry logic to cover the issue.
-         */
-        const initTasks: Promise<void>[] = [];
-        if (result.needCreateFolder) {
-            initTasks.push(
-                createEmptyFolderPathInRepoIfNotExists(
-                    githubUserName,
-                    repoName,
-                    result.folderPath,
-                    accessToken,
-                )
-            );
-        }
-        if (result.needCreateIndexFile) {
-            initTasks.push(
-                this.createEmptyFileInRepo(
-                    accessToken,
-                    githubUserName,
-                    repoName,
-                    result.titleIndexFilePath
-                )
-            );
-        }
-        if (initTasks.length > 0) {
-            await Promise.all(initTasks);
-        }
+        console.log("title: ", title, "title.length: ", title.length)
+        const titleHash = edgeHash64(title)
+        console.log("titleHash: ", titleHash)
+        const filePath = `${vaultPathInRepo}/${vaultName}/${titleHash.slice(0,2)}/${titleHash.slice(2,4)}/${titleHash.slice(4)}.md`
+        console.log("filePath: ", filePath)
 
         await this.pushFileToGitHub({
             accessToken,
             githubUserName,
             repoName,
-            filePath: result.filePath,
+            filePath: filePath,
             content,
-            commitMessage,
+            commitMessage: `${commitMessage}:${titleHash}`,
             taskId,
         });
-
-        /**
-         * First sent to titleIndexCache, titleIndex. If titleIndexCache meets a certain number, the titleIndexCache content will be appended to the front of the GitHub titleIndexFilePath file page to ensure that the index file content is up to date.
-         * title cannot be an empty string, otherwise it will cause hash calculation errors, and the index and remote path will not be correctly generated.
-         * If title is empty or '', the index update will be skipped, but the content file will still be pushed to GitHub to ensure that the article content will not be lost due to indexing issues.
-         */
-        if (title) {
-            await this.pushTitleIndexCacheToGitHub({
-                accessToken,
-                githubUserName,
-                repoName,
-                titleIndexFilePath: result.titleIndexFilePath,
-                commitMessage,
-                title,
-            });
-        }
 
         // Delete a processed task
         await this.deleteTask(taskId);
@@ -529,196 +262,38 @@ export class MyDurableObject extends DurableObject<Env> {
         }
     }
 
-    /**
-     * Write the current title into titleIndex (local LRU) and titleIndexCache (buffer to be pushed),
-     * When the number of titleIndexCache reaches TITLE_INDEX_CACHE_FLUSH_THRESHOLD,
-     * Batch prepend the buffered content to the titleIndexFilePath file on GitHub,
-     * Then clear the titleIndexCache.
-     *
-     * In this way, multiple title indexes can be merged into one GitHub commit, reducing the frequency of API calls.
-     * Also ensure that the latest entry in the index file appears at the front of the file.
-     */
-    private async pushTitleIndexCacheToGitHub(params: {
-        accessToken: string;
-        githubUserName: string;
-        repoName: string;
-        titleIndexFilePath: string;
-        commitMessage: string;
-        title: string;
-    }): Promise<void> {
-        const { accessToken, githubUserName, repoName, titleIndexFilePath, commitMessage, title } = params;
-
-        // ---- 1. Calculate the hash of the title & generate the remote article path ----
-        const encoder = new TextEncoder();
-        const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(title));
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashOfTitle = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-        // remoteArticlePath uses the directory where the current titleIndexFilePath is located;
-        // This stores the actual file push path, determined by allocateNextFileLocation
-        const remoteArticlePath = titleIndexFilePath;
-
-        // ---- 2. Write to titleIndex (local LRU) and titleIndexCache (buffer to be pushed) ----
-        const insertParams = { title, hashOfTitle, remoteArticlePath };
-        await this.sqliteRepository.insertTitleIndex(insertParams);
-        // insertParams.title cannot be '' empty string, an error will be thrown directly
-        if (!insertParams.title) {
-            throw new Error('Title is required');
-        }
-        await this.sqliteRepository.insertTitleIndexCache(insertParams);
-
-        // ---- 3. Check if cache has reached flush threshold ----
-        const cacheCount = await this.sqliteRepository.getTitleIndexCacheCount();
-        console.log(`titleIndexCache count: ${cacheCount}, threshold: ${TITLE_INDEX_CACHE_FLUSH_THRESHOLD}`);
-
-        if (cacheCount < TITLE_INDEX_CACHE_FLUSH_THRESHOLD) {
-            // Not enough, wait for the next push
-            return;
-        }
-
-        // ---- 4. Read all cache entries and assemble them into JSON lines ----
-        const cacheEntries = this.sqliteRepository.getAllTitleIndexCache();
-        if (cacheEntries.length === 0) {
-            return;
-        }
-
-        // Each record is converted to a line of JSON, with the latest at the front (cacheEntries is sorted by createdAt ASC, reversed to have the latest first)
-        const newLines = [...cacheEntries].reverse().map(entry =>
-            JSON.stringify({
-                title: entry.title,
-                hashOfTitle: entry.hashOfTitle,
-                remoteArticlePath: entry.remoteArticlePath,
-                createdAt: entry.createdAt,
-            })
-        ).join('\n');
-
-        // ---- 5. Get existing index file content from GitHub ----
-        const fileUrl = `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${titleIndexFilePath}`;
-        let existingContent = '';
-        let fileSha: string | null = null;
-
-        const MAX_RETRIES = 3;
-
-        const getRes = await fetch(fileUrl, {
-            method: 'GET',
-            headers: {
-                Authorization: `Bearer ${accessToken}`,
-                'User-Agent': 'Hono-Worker',
-            },
-        });
-
-        if (getRes.ok) {
-            const fileData = (await getRes.json()) as { sha: string; content: string };
-            fileSha = fileData.sha;
-            // The content returned by GitHub is base64 encoded and may contain newlines
-            existingContent = Buffer.from(fileData.content.replace(/\n/g, ''), 'base64').toString('utf-8');
-        }
-
-        // ---- 6. Prepend new entries to the front of the file ----
-        const mergedContent = existingContent
-            ? `${newLines}\n${existingContent}`
-            : newLines;
-
-        const base64Content = Buffer.from(mergedContent, 'utf-8').toString('base64');
-
-        // ---- 7. Push to GitHub (with retries) ----
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            // Retry fetching SHA
-            if (attempt > 0) {
-                const retryGetRes = await fetch(fileUrl, {
-                    method: 'GET',
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                        'User-Agent': 'Hono-Worker',
-                    },
-                });
-                if (retryGetRes.ok) {
-                    const retryData = (await retryGetRes.json()) as { sha: string; content: string };
-                    if (retryData.sha !== fileSha) {
-                        // SHA has changed, indicating the file was modified by another commit
-                        // We need to re-merge based on the latest content, otherwise we might overwrite others' changes.
-                        fileSha = retryData.sha;
-                        const latestContent = Buffer.from(retryData.content.replace(/\n/g, ''), 'base64').toString('utf-8');
-                        const reMerged = latestContent
-                            ? `${newLines}\n${latestContent}`
-                            : newLines;
-                        var updatedBase64 = Buffer.from(reMerged, 'utf-8').toString('base64');
-                    } else {
-                        // SHA has not changed, the file content has not been modified, we can use the previously merged content
-                        fileSha = retryData.sha;
-                        var updatedBase64 = base64Content;
-                    }
-                } else {
-                    updatedBase64 = base64Content;
-                }
-            } else {
-                var updatedBase64 = base64Content;
-            }
-
-            const putRes = await fetch(fileUrl, {
-                method: 'PUT',
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    'User-Agent': 'Hono-Worker',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    message: `${commitMessage} - update title index`,
-                    content: updatedBase64,
-                    sha: fileSha || undefined,
-                }),
-            });
-
-            if (putRes.ok) {
-                break;
-            }
-
-            if (putRes.status === 409 && attempt < MAX_RETRIES - 1) {
-                console.warn(`SHA conflict (409) pushing title index on attempt ${attempt + 1}, retrying...`);
-                await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
-                continue;
-            }
-
-            const errorText = await putRes.text();
-            throw new Error(`Failed to push title index to GitHub: ${errorText}`);
-        }
-
-        // ---- 8. Push successful, clear titleIndexCache ----
-        this.sqliteRepository.clearTitleIndexCache();
-        console.log(`Flushed ${cacheEntries.length} title index entries to GitHub: ${titleIndexFilePath}`);
-    }
-
     async searchCommits({
         githubUserName,
-        repoName,
+        githubRepoName,
         accessToken,
         threshold,
         searchPath = "",
-        tag = NEW_TAG,
+        commitFilter = COMMITFILTER,
         perPage = PER_PAGE,
+        maxPages,
     }: {
         githubUserName: string;
-        repoName: string;
+        githubRepoName: string;
         accessToken: string;
         threshold: number;
         searchPath?: string;
-        tag?: string;
+        commitFilter?: string;
         perPage?: number;
+        maxPages?: number;
     }): Promise<SearchCommitResult[]> {
         if (!githubUserName?.trim()) throw new ValidationError("githubUserName is required");
-        if (!repoName?.trim()) throw new ValidationError("repoName is required");
+        if (!githubRepoName?.trim()) throw new ValidationError("githubRepoName is required");
         if (!accessToken?.trim()) throw new ValidationError("accessToken is required");
-
-        // searchPath = 
 
         return searchCommits({
             owner: githubUserName,
-            repo: repoName,
+            repo: githubRepoName,
             token: accessToken,
             threshold,
             searchPath,
-            tag,
+            commitFilter,
             perPage,
+            maxPages,
         });
     }
 
@@ -797,45 +372,6 @@ export class MyDurableObject extends DurableObject<Env> {
     // The following methods are implemented by proxying to SqliteRepository
 
     /**
-     * Insert a new title record into the titleIndex table
-     */
-    async insertTitleIndex(params: {
-        title: string;
-        hashOfTitle: string;
-        remoteArticlePath: string;
-    }): Promise<{ id: string }> {
-        return this.sqliteRepository.insertTitleIndex(params);
-    }
-
-    /**
-     * Query title records based on hashOfTitle
-     */
-    async queryTitleIndexByHash(hashOfTitle: string): Promise<any | null> {
-        return this.sqliteRepository.queryTitleIndexByHash(hashOfTitle);
-    }
-
-    /**
-     * Query title records based on ID
-     */
-    async queryTitleIndexById(id: string): Promise<any | null> {
-        return this.sqliteRepository.queryTitleIndexById(id);
-    }
-
-    /**
-     * Get all title records
-     */
-    async getAllTitleIndex(): Promise<any[]> {
-        return this.sqliteRepository.getAllTitleIndex();
-    }
-
-    /**
-     * Get title record count
-     */
-    async getTitleIndexCount(): Promise<number> {
-        return this.sqliteRepository.getTitleIndexCount();
-    }
-
-    /**
      * Insert a new article content record into the articleContent table
      */
     async insertArticleContent(params: {
@@ -897,13 +433,6 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     /**
-     * Delete title record
-     */
-    async deleteTitleIndex(idOfTitleIndex: string): Promise<void> {
-        return this.sqliteRepository.deleteTitleIndex(idOfTitleIndex);
-    }
-
-    /**
      * Delete a single article content
      */
     async deleteArticleContent(id: string): Promise<void> {
@@ -923,69 +452,54 @@ export class MyDurableObject extends DurableObject<Env> {
     }
 
     async switchAndInitVault(
-        githubUserName: string,
-        githubRepoName: string,
-        vaultPathInRepo: string,
-        vaultName: string,
-        branch: string,
-        accessToken: string
+        {
+            githubUserName,
+            githubRepoName,
+            vaultPathInRepo,
+            vaultName,
+            accessToken,
+            branch,
+        }: {
+            githubUserName: string;
+            githubRepoName: string;
+            vaultPathInRepo: string;
+            vaultName: string;
+            accessToken: string;
+            branch: string;
+        }
     ): Promise<void> {
-        const INIT_MARKDOWN_FILES_TO_LOAD = 20; // The number of markdown files to load into memory during initialization, which can be adjusted based on actual needs and performance considerations.
+
         // before Init Vault
         this.resetDoKeyStorageAndSqlite();
         // check vaultPathInRepo exists, if not, create it
         await createEmptyFolderPathInRepoIfNotExists(githubUserName, githubRepoName, `${vaultPathInRepo}/${vaultName}`, accessToken);
 
-        const vaultMetaInfo: VaultMetaInfo = await fetchVaultMetaInfo(
+        const commits = await this.searchCommits({
             githubUserName,
             githubRepoName,
-            vaultPathInRepo,
-            vaultName,
-            accessToken
-        );
-        // Initialize the vault with the retrieved metadata
-        console.log("Initializing vault with metadata:", vaultMetaInfo);
-
-        let {folderIndexInVault, fileIndexInFolder, currentTitleIndexCount,indexOfTitleIndexFiles, markdownFileList, lastTitleIndexFileContentLines} = vaultMetaInfo;
-        // save the vault metadata to SQLite kvMeta for later use (such as determining the next file index when pushing content)
-        this.sqliteRepository.setKvMeta(KV_META_KEYS.FOLDER_INDEX_IN_VAULT, folderIndexInVault);
-        this.sqliteRepository.setKvMeta(KV_META_KEYS.FILE_INDEX_IN_FOLDER, fileIndexInFolder);
-        this.sqliteRepository.setKvMeta(KV_META_KEYS.CURRENT_TITLE_INDEX_COUNT, currentTitleIndexCount);
-        this.sqliteRepository.setKvMeta(KV_META_KEYS.INDEX_OF_TITLE_INDEX_FILES, indexOfTitleIndexFiles);
-
-
-        // Sort markdownFileList in ascending order. The internal contents of markdownFileList are 0.md 1.md 2.md. To sort file names, use string sorting.
-        markdownFileList.sort((a, b) => parseInt(a.split('/').pop()?.split('.md')[0] || '0') - parseInt(b.split('/').pop()?.split('.md')[0] || '0'));
-
-        // Get the contents of the last INIT_MARKDOWN_FILES_TO_LOAD markdown files and save them to SQLite. You can then load more files or implement paged loading according to actual needs.
-        const selectedMarkdownFileList = markdownFileList.slice(-INIT_MARKDOWN_FILES_TO_LOAD);
-        console.log("Selected Markdown Files: ", selectedMarkdownFileList);
+            accessToken,
+            threshold:20,
+            searchPath:`${vaultPathInRepo}/${vaultName}/`,
+            commitFilter:"[NEW] by memoflow",
+            perPage:20,
+        })
+        const selectedMarkdownFileList = Array.from(new Set(commits
+            .map((commit) => {
+                const parts = commit.message.split(":");
+                const titleHash = parts[parts.length - 1]?.trim();
+                if (!titleHash) return null;
+                const filePath = `${vaultPathInRepo}/${vaultName}/${titleHash.slice(0,2)}/${titleHash.slice(2,4)}/${titleHash.slice(4)}.md`;
+                return filePath;
+            })
+            .filter((filePath): filePath is string => Boolean(filePath))));
+        console.log("selectedMarkdownFileList", selectedMarkdownFileList.slice(0,10))
+        
         const FileContents = await batchGetFileContents(githubUserName, githubRepoName, selectedMarkdownFileList, branch,  accessToken);
-        console.log("FileContents: ", FileContents);
+        console.log("FileContents: ", FileContents.slice(0, 10));
         const articleParamsList = FileContents.map((fileContent) => ({
             title: getTitleFromContent(fileContent.content),
             content: fileContent.content,
         }));
         await this.sqliteRepository.batchInsertArticleContent(articleParamsList);
-
-        // save lastTitleIndexFileContentLines to sqlite titleIndex table
-        if (lastTitleIndexFileContentLines && lastTitleIndexFileContentLines.length > 0) {
-            const titleIndexParamsList = lastTitleIndexFileContentLines.map(line => {
-                try {
-                    const parsed = JSON.parse(line);
-                    return {
-                        title: parsed.title,
-                        hashOfTitle: parsed.hashOfTitle,
-                        remoteArticlePath: parsed.remoteArticlePath,
-                        createdAt: parsed.createdAt,
-                    };
-                } catch (error) {
-                    console.error("Failed to parse title index line:", line, "error:", error);
-                    return null;
-                }
-            }).filter((item): item is { title: string; hashOfTitle: string; remoteArticlePath: string; createdAt: string } => item !== null);
-            await this.sqliteRepository.batchInsertTitleIndex(titleIndexParamsList);
-        }
-
     }
 }
