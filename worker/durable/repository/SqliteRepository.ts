@@ -158,21 +158,6 @@ export class SqliteRepository {
         return resultArray[0]?.count || 0;
     }
 
-    // =============== titleIndex table operation methods ==================
-
-    /**
-     * Private method: Update the last_access time of a record
-     */
-    private updateLastAccess(id: string): void {
-        this.sql.exec(
-            `
-            UPDATE titleIndex
-            SET last_access = cast(strftime('%s','now') as int)
-            WHERE id = ?
-            `,
-            id
-        );
-    }
 
     // ===================== articleContent  =====================
 

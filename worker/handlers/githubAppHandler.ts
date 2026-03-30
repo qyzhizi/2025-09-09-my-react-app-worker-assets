@@ -14,7 +14,6 @@ import { validateGitRepoFullName } from "@/common"
 import { ValidationError, NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
 import {testGitHubRepoAcess} from "@/providers"
-import { getRepoVaultMetaInfo } from "@/providers";
 import {type GithubRepoAccess} from "@/infrastructure/types";
 import { PER_PAGE } from "@/ConstVar";
 
@@ -159,10 +158,6 @@ export async function getGitHubAppInstallationReposHandler(c:Context<{Bindings: 
   return c.json({installationData})
 }
 
-export async function getRepoVaultMetaInfoHandler(c:Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>) {
-    const vaultMetaInfo = await getRepoVaultMetaInfo(c);
-    return c.json({ vaultMetaInfo });
-}
 
 export async function searchCommitsHandler(c:Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   const thresholdParam = c.req.query("threshold");
