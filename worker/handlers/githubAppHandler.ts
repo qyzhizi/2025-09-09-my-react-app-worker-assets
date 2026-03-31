@@ -23,13 +23,16 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
   try {
     const body = await c.req.json()
     const { githubRepoFullName, vaultPathInRepo } = body
+    const normalizedVaultPathInRepo = typeof vaultPathInRepo === "string"
+      ? vaultPathInRepo.trim().replace(/^\/+|\/+$/g, "")
+      : ""
 
     // verify vaultPathInRep
-    if (!vaultPathInRepo || vaultPathInRepo.trim() === '') {
+    if (!normalizedVaultPathInRepo) {
       return c.json({ error: 'Empty vaultPathInRepo' }, 400);
     }
     // verify vaultPathInRepo format
-    if (!/^([\w\-./]+)$/.test(vaultPathInRepo)) {
+    if (!/^([\w\-./]+)$/.test(normalizedVaultPathInRepo)) {
       return c.json({ error: 'Invalid vaultPathInRepo format. Only alphanumeric characters, hyphens, underscores, dots, and slashes are allowed.' }, 400);
     }
     
@@ -78,7 +81,7 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
       await safeUpdategithubRepoAccessByUserId(c, { branch: dbBranch });
     }
     let durableIsReset = false
-    if (vaultPathInRepo !== dbVaultPathInRepo || githubRepoName !== dbGithubRepoName) {
+    if (normalizedVaultPathInRepo !== dbVaultPathInRepo || githubRepoName !== dbGithubRepoName) {
       console.warn("vaultPathInRepo or githubRepoName is different from DB!")
       // reset durable object storage and sqlite to avoid potential issue caused by inconsistent repoName or vaultPathInRepo
       await duableSwitchAndInitVault(
@@ -86,7 +89,7 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
         {
           githubUserName,
           githubRepoName,
-          vaultPathInRepo,
+          vaultPathInRepo: normalizedVaultPathInRepo,
           vaultName: dbVaultName,
           accessToken,
           branch: dbBranch,
@@ -96,7 +99,7 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     }
 
     try{
-      await safeUpdategithubRepoAccessByUserId(c, { githubRepoName, vaultPathInRepo });
+      await safeUpdategithubRepoAccessByUserId(c, { githubRepoName, vaultPathInRepo: normalizedVaultPathInRepo });
       await testGitHubRepoAcess(accessToken, githubUserName, githubRepoName);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
