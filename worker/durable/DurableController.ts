@@ -4,7 +4,7 @@ import type { Task, PushGitRepoTaskParams, PushGitRepoTaskRespon } from "@/types
 import { SqliteRepository } from "@/durable/repository";
 
 import {batchGetFileContents} from "@/durable/github/githubGetContent";
-import { getTitleFromContent } from "@/common"
+import { getMetaDataFromContent } from "@/common"
 import { createEmptyFolderPathInRepoIfNotExists } from "@/durable/github/githubApp";
 import { searchCommits } from "@/durable/github/searchCommits";
 import type { SearchCommitResult } from "@/durable/github/searchCommits";
@@ -90,6 +90,9 @@ export class MyDurableObject extends DurableObject<Env> {
         if (!this.isTaskPayload(data)) {
             throw new ValidationError('Type Check Error: Invalid payload');
         }
+        if (!data.createdAt) {
+            throw new ValidationError('Type Check Error: createdAt is required');
+        }
 
         const params: PushGitRepoTaskParams = {
             id: data.id ,
@@ -102,13 +105,17 @@ export class MyDurableObject extends DurableObject<Env> {
             title: data.title ?? '',
             content: data.content ?? '',
             completed: false,
-            createdAt: data.createdAt ?? new Date().toISOString()
+            createdAt: data.createdAt,
         };
 
         await this.state.storage.put(data.id, params);
         // save content to DO SQL for later query and analysis
         console.log("Saving content to Durable Object SQL:", data.content);
-        await this.saveContentToDOSql(data.title, data.content);
+        await this.saveContentToDOSql(
+            params.title,
+            params.createdAt,
+            params.content
+        );
         return params;
     }
 
@@ -121,7 +128,7 @@ export class MyDurableObject extends DurableObject<Env> {
         return task;
     }
 
-    async saveContentToDOSql(title: string, content: string): Promise<any> {
+    async saveContentToDOSql(title: string, date: string, content: string): Promise<any> {
         // 参数验证
         if (title === undefined || title === null || title === '') {
             console.warn("Warning: title is empty, using default");
@@ -130,9 +137,13 @@ export class MyDurableObject extends DurableObject<Env> {
         if (content === undefined || content === null || content === '') {
             throw new Error("Content cannot be empty");
         }
+        if (date === undefined || date === null || date === '') {
+            throw new Error("date cannot be empty");
+        }
 
         const id = await this.insertArticleContent({
             title,
+            date,
             content
         });
 
@@ -376,6 +387,7 @@ export class MyDurableObject extends DurableObject<Env> {
      */
     async insertArticleContent(params: {
         title: string;
+        date: string;
         content: string;
     }): Promise<{ id: string }> {
         console.log("Inserting article content:", params);
@@ -496,10 +508,14 @@ export class MyDurableObject extends DurableObject<Env> {
         
         const FileContents = await batchGetFileContents(githubUserName, githubRepoName, selectedMarkdownFileList, branch,  accessToken);
         console.log("FileContents: ", FileContents.slice(0, 10));
-        const articleParamsList = FileContents.map((fileContent) => ({
-            title: getTitleFromContent(fileContent.content),
-            content: fileContent.content,
-        }));
+        const articleParamsList = FileContents.map((fileContent) => {
+            const { title, date } = getMetaDataFromContent(fileContent.content);
+            return {
+                title: title || date,
+                date: date,
+                content: fileContent.content,
+            };
+        });
         await this.sqliteRepository.batchInsertArticleContent(articleParamsList);
     }
 }

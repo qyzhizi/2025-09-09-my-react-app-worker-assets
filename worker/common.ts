@@ -50,23 +50,47 @@ export async function generateJWT(appId: string, privateKey: string) {
   return token
 }
 
-export function getTitleFromContent(content: string): string {
-  // Extract titles using regular expressions
+export function getMetaDataFromContent(content: string): { title: string; date: string } {
   let title = '';
-  
-  // First look for lines with #que followed by a space
-  const queMatch = content.match(/^\x20{0,2}#que(?:\x20)(.*)$/m);
-  if (queMatch && queMatch[1]) {
+  let date = '';
+
+  // Parse metadata in HTML comment frontmatter:
+  // <!--
+  // title: xxx
+  // date: 2026-03-31T04:33:46.585Z
+  // -->
+  const frontmatterMatch = content.match(/<!--([\s\S]*?)-->/);
+  if (frontmatterMatch && frontmatterMatch[1]) {
+    const frontmatter = frontmatterMatch[1];
+    const frontmatterTitleMatch = frontmatter.match(/^\s*title\s*:\s*(.+)\s*$/m);
+    const frontmatterDateMatch = frontmatter.match(/^\s*date\s*:\s*(.+)\s*$/m);
+
+    if (frontmatterTitleMatch && frontmatterTitleMatch[1]) {
+      title = frontmatterTitleMatch[1].trim();
+    }
+    if (frontmatterDateMatch && frontmatterDateMatch[1]) {
+      date = frontmatterDateMatch[1].trim();
+    }
+  }
+
+  if(!title && date){
+    return { title, date }
+  }
+  // Fallback to markdown headings when frontmatter title is absent.
+  if (!title && !date) {
+    const queMatch = content.match(/^\x20{0,2}#que(?:\x20)(.*)$/m);
+    if (queMatch && queMatch[1]) {
       title = queMatch[1].trim();
-  } else {
-      // If #que is not found, search for the first "#" line followed by a space
+    } else {
       const headerMatch = content.match(/^\x20{0,2}#(?:\x20)(.*)$/m);
       if (headerMatch && headerMatch[1]) {
-          title = headerMatch[1].trim();
+        title = headerMatch[1].trim();
       }
+    }
   }
-  console.log("Extracted title: ", title)
-  return title ;
+
+  console.log('Extracted title and date:', { title, date });
+  return { title, date };
 }
 
 export function normalizeGitHubPath(path: string): string {

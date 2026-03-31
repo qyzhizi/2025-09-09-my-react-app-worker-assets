@@ -168,7 +168,7 @@ export class SqliteRepository {
     async insertArticleContent(
         params: InsertArticleContentParams
     ): Promise<InsertResult> {
-        const { title, content } = params;
+        const { title, date, content } = params;
         const id = uuidv4();
         
         // param validation
@@ -178,16 +178,20 @@ export class SqliteRepository {
         if (content === undefined || content === null) {
             throw new Error(`Invalid content: ${content}`);
         }
+        if (date === undefined || date === null) {
+            throw new Error(`Invalid date: ${date}`)
+        }
 
         // Insert new article
         this.sql.exec(
-            `INSERT INTO articleContent (id, title, content)
-            VALUES (?, ?, ?)`,
+            `INSERT INTO articleContent (id, title, content, createdAt)
+            VALUES (?, ?, ?, ?)`,
             id,
             title,
-            content
+            content,
+            date,
         );
-        console.log(`Inserting article content with id=${id}, title="${title}", content length=${content.length}`);
+        console.log(`Inserting article content with id=${id}, title=${title}, date=${date}, content length=${content.length}`);
 
         // Update count table
         try {
@@ -222,18 +226,19 @@ export class SqliteRepository {
 
         // Pre-validate all params and generate ids
         // Assign sequential createdAt timestamps so each record has a distinct creation time
-        const baseTime = Date.now();
         const prepared: Array<{ id: string; title: string; content: string; createdAt: string }> = [];
         for (let idx = 0; idx < paramsList.length; idx++) {
-            const { title, content } = paramsList[idx];
+            const { title, date: createdAt, content } = paramsList[idx];
             if (title === undefined || title === null) {
                 throw new Error(`Invalid title: ${title}`);
             }
             if (content === undefined || content === null) {
                 throw new Error(`Invalid content: ${content}`);
             }
+            if (createdAt === undefined || createdAt === null) {
+                throw new Error(`Invalid content: ${createdAt}`);
+            }
             // Each record gets baseTime + idx milliseconds, formatted as ISO 8601 string
-            const createdAt = new Date(baseTime - idx).toISOString().replace('T', ' ').replace('Z', '');
             prepared.push({ id: uuidv4(), title, content, createdAt });
         }
 

@@ -20,7 +20,7 @@ export interface PushGitRepoTaskParams {
     title: string;
     content: string;
     completed: boolean;
-    createdAt?: string;
+    createdAt: string;
 }
 
 export interface PushGitRepoTaskRespon {

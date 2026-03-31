@@ -28,6 +28,7 @@ export interface InsertTitleIndexParams {
 
 export interface InsertArticleContentParams {
     title: string;
+    date: string;
     content: string;
 }
 

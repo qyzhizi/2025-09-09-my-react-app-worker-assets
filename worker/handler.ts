@@ -24,7 +24,7 @@ import { safeUpdategithubRepoAccessByUserId,
 } from "@/infrastructure/githubRepoAccess"
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { Provider } from "@/types/provider";
-import { getTitleFromContent } from "@/common"
+import { getMetaDataFromContent } from "@/common"
 import { NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
 import {type GithubRepoAccess} from "@/infrastructure/types";
@@ -274,16 +274,21 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
     }
 
     const taskId = nanoid()
-    const now = new Date().toISOString()
-    let title = getTitleFromContent(content) 
+    // const now = new Date().toISOString()
+    const { title: extractedTitle, date: extractedDate } = getMetaDataFromContent(content)
+    if (!extractedDate){
+      console.error("Date is required in content")
+      return c.json({ error: "Date is required in content" }, 404);
+    }
+    let title = extractedTitle
     if (!title) {
-      title = now
+      title = extractedDate
     }
 
     const logEntry = {
       message: "[NEW] by memoflow",
       content,
-      created_at: now,
+      created_at: extractedDate,
       taskId: taskId,
       title: title,
     }

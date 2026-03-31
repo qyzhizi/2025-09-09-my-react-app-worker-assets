@@ -7,6 +7,22 @@ interface LogInputProps {
   onLogSubmitted?: () => void;
 }
 
+function getTitleFromContent(content: string): string {
+  let title = '';
+
+  const queMatch = content.match(/^\x20{0,2}#que(?:\x20)(.*)$/m);
+  if (queMatch && queMatch[1]) {
+    title = queMatch[1].trim();
+  } else {
+    const headerMatch = content.match(/^\x20{0,2}#(?:\x20)(.*)$/m);
+    if (headerMatch && headerMatch[1]) {
+      title = headerMatch[1].trim();
+    }
+  }
+
+  return title;
+}
+
 const LogInput = ({ onLogSubmitted }: LogInputProps) => {
   const [log, setLog] = useState('');
 
@@ -14,9 +30,11 @@ const LogInput = ({ onLogSubmitted }: LogInputProps) => {
     if (log.trim() === '') return;
   
     const now = new Date();
-    const dateStr = now.toLocaleDateString();
-    const timeStr = now.toLocaleTimeString();
-    const fullLog = `## ${dateStr} ${timeStr}:\n` + log;
+    const markdownDate = now.toISOString();
+    const extractedTitle = getTitleFromContent(log);
+    const title = extractedTitle || '';
+    const frontMatter = `<!--\ntitle: ${title}\ndate: ${markdownDate}\n-->\n\n`;
+    const fullLog = frontMatter + log;
   
     try {
       const response = await apiFetch('/api/diary-log/addlog', {

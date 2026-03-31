@@ -15,6 +15,10 @@ interface LogListProps {
   refreshFlag?: number;
 }
 
+function stripLeadingMetaComment(markdown: string): string {
+  return markdown.replace(/^\s*<!--[\s\S]*?-->\s*/u, '');
+}
+
 const LogList = ({ refreshFlag }: LogListProps) => {
   const [logs, setLogs] = useState<LogItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +49,7 @@ const LogList = ({ refreshFlag }: LogListProps) => {
   const renderedLogs = useMemo(() => {
     return logs.map((log) => ({
       ...log,
-      html: micromark(log.content, {
+      html: micromark(stripLeadingMetaComment(log.content), {
         extensions: [gfm()],
         htmlExtensions: [gfmHtml()],
       }),
