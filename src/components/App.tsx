@@ -1,6 +1,8 @@
 import { useState, useRef } from "react";
 import { Header } from "@/components/Header";
-import { MobileTopBar } from "@/components/MobileTopBar";
+import { TopBar } from "@/components/TopBar";
+import { navigate } from "@/RouterLite";
+
 
 // App layout components
 export const App = ({ children }: { children: any }) => {
@@ -13,6 +15,16 @@ export const App = ({ children }: { children: any }) => {
     }
   };
 
+  /** Navigates to dedicated search route; empty query returns to logs home. */
+  const handleSearch = (query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      navigate("/", true);
+      return;
+    }
+    navigate(`/search?q=${encodeURIComponent(trimmed)}`, true);
+  };
+
   return (
     <div className="flex h-screen w-full ">
       {/* <div className="max-w-container min-w-container relative mx-auto flex"> */}
@@ -23,7 +35,10 @@ export const App = ({ children }: { children: any }) => {
         />
         {/* content */}
         <div className="flex-1 flex flex-col w-full md:w-auto ">
-          <MobileTopBar onMenuClick={() => setIsSidebarOpen(true)} />
+          <TopBar
+            onMenuClick={() => setIsSidebarOpen(true)}
+            onSearch={handleSearch}
+          />
         
           <div 
             ref={contentRef}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { navigate } from '@/Routers'; // Custom navigation function
+import { navigate } from "@/RouterLite";
 import { LogoutIcon } from "./Logout"; 
 import { LoginIcon, Avatar } from "./Login"; 
 
@@ -15,7 +15,7 @@ export const AuthButton = ({ avatarUrl, logout }: AuthButtonProps) => {
 
   const handleLogout = async () => {
     await logout();
-    navigate("/login");
+    navigate("/login", true);
   };
 
   const renderContent = () => {

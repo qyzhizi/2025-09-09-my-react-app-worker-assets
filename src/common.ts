@@ -1,5 +1,4 @@
-import { navigate } from '@/Routers'
-
+import { navigate } from "@/RouterLite";
 
 export async function apiFetch(
   input: RequestInfo,
@@ -11,7 +10,7 @@ export async function apiFetch(
   })
 
   if (res.status === 401) {
-    navigate('/login', { replace: true })
+    navigate('/login', false)
     throw new Error('Unauthorized')
   }
 

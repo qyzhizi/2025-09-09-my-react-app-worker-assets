@@ -1,7 +1,7 @@
 // InitRefreshToken.tsx
 import { useEffect } from 'react';
 import { apiFetch } from '@/common';
-import { navigate } from '@/Routers'
+import { navigate } from '@/RouterLite'
 
 // init-refresh-token
 export async function initRefreshToken() {
@@ -17,7 +17,7 @@ export function InitRefreshToken() {
         await initRefreshToken()
         } finally {
         // Whether successful or not, jump immediately.
-        navigate('/', { replace: true })
+        navigate('/', true)
         }
     }
 

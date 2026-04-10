@@ -1,6 +1,6 @@
-import type { ReactNode, FC } from 'react'
-
+import { createRouter } from "./RouterLite";
 import Logs from './components/Logs'
+import SearchLogs from '@/components/SearchLogs'
 import { Login } from './components/Login'
 import { InitRefreshToken } from './components/InitRefreshToken'
 import MainSettingPage from './components/settings/MainSettingPage'
@@ -10,18 +10,7 @@ import GithubAppSetupSuccess from './components/GithubAppSetupSuccess'
 import {AppLayout} from './layouts/AppLayout'
 import {EmptyLayout} from './layouts/EmptyLayout'
 
-export type RouteConfig = {
-  path: string
-  element: ReactNode
-  layout?: FC<{ children: ReactNode }>
-  auth?: boolean
-}
-
-type NavigateOptions = {
-  replace?: boolean
-}
-
-export const routes: RouteConfig[] = [
+createRouter([
   {
     path: '/login',
     element: <Login />,
@@ -31,19 +20,21 @@ export const routes: RouteConfig[] = [
     path: '/',
     element: <Logs />,
     layout: AppLayout,
-    auth: true,
+  },
+  {
+    path: '/search',
+    element: <SearchLogs />,
+    layout: AppLayout,
   },
   {
     path: '/settings-page',
     element: <MainSettingPage />,
     layout: AppLayout,
-    auth: true,
   },
   {
     path: '/local-store',
     element: <LocalStoreApp />,
     layout: AppLayout,
-    auth: true,
   },
   {
     path:'/login-callback-init-refresh-token',
@@ -55,19 +46,4 @@ export const routes: RouteConfig[] = [
     element: <GithubAppSetupSuccess />,
     layout: EmptyLayout,
   }
-
-]
-
-
-export function navigate(path: string, options: NavigateOptions = {}) {
-  const { replace = false } = options
-
-  if (replace) {
-    window.history.replaceState({}, '', path)
-  } else {
-    window.history.pushState({}, '', path)
-  }
-
-  // Notify your AppRouter of updates
-  window.dispatchEvent(new PopStateEvent('popstate'))
-}
+]);
