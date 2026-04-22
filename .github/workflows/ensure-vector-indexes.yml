@@ -1,0 +1,71 @@
+name: Ensure Multiple Cloudflare Vector Indexes
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ensure-indexes:
+    runs-on: ubuntu-latest
+
+    env:
+      INDEX_PREFIX: memoflow-index
+      INDEX_COUNT: ${{ vars.INDEX_COUNT }}
+
+    steps:
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Ensure indexes exist (no file)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "INDEX_COUNT=$INDEX_COUNT"
+
+          # 校验
+          if ! [[ "$INDEX_COUNT" =~ ^[0-9]+$ ]]; then
+            echo "❌ INDEX_COUNT is not a valid number"
+            exit 1
+          fi
+
+          # 一次性获取所有 index 名（存在内存变量）
+          existing_indexes=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            | jq -r '.result[]?.name')
+
+          echo "Existing indexes:"
+          echo "$existing_indexes"
+
+          # 循环检查 + 创建
+          for ((i=0; i<$INDEX_COUNT; i++)); do
+            INDEX_NAME="${INDEX_PREFIX}-${i}"
+            echo "Processing $INDEX_NAME..."
+
+            if echo "$existing_indexes" | grep -q "^$INDEX_NAME$"; then
+              echo "✔ $INDEX_NAME already exists"
+              continue
+            fi
+
+            echo "➕ Creating $INDEX_NAME..."
+
+            response=$(curl -s -w "\n%{http_code}" -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -d "{
+                    \"config\": {
+                      \"dimensions\": 1024,
+                      \"metric\": \"cosine\"
+                    },
+                    \"name\": \"$INDEX_NAME\",
+                    \"description\": \"Auto-created by GitHub Actions\"
+                  }")
+
+            status=$(echo "$response" | tail -n 1)
+
+            if [ "$status" -ne 200 ]; then
+              echo "❌ Failed to create $INDEX_NAME"
+              exit 1
+            fi
+
+            echo "✅ Created $INDEX_NAME"
+          done
