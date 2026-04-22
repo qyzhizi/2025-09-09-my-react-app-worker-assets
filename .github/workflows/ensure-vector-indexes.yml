@@ -20,9 +20,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          # 打印变量（脱敏）
-          echo "CLOUDFLARE_API_TOKEN: '$CLOUDFLARE_API_TOKEN'"
-          echo "ACCOUNT_ID: '$ACCOUNT_ID'"
           echo "Checking INDEX_COUNT: '$INDEX_COUNT'"
 
           if ! [[ "$INDEX_COUNT" =~ ^[0-9]+$ ]]; then
@@ -30,11 +27,11 @@ jobs:
             exit 1
           fi
 
-          # 获取现有索引
+          # get existing indexes
           raw_response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes" \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
   
-          # 检查 API 是否报错
+          # check API response is success
           if echo "$raw_response" | jq -e '.success == false' > /dev/null; then
             echo "❌ Cloudflare API Error:"
             echo "$raw_response" | jq .
@@ -53,7 +50,7 @@ jobs:
 
             echo "➕ Creating $INDEX_NAME..."
     
-            # 捕获完整响应
+            # get whole response of API call
             response=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes" \
               -H "Content-Type: application/json" \
               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
@@ -66,7 +63,7 @@ jobs:
                     \"description\": \"Auto-created by GitHub Actions\"
                   }")
 
-            # 改用 jq 判断 success 字段，这比判断 HTTP 状态码更稳健
+            # check success field of API response
             is_success=$(echo "$response" | jq -r '.success')
 
             if [ "$is_success" != "true" ]; then
