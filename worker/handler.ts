@@ -13,6 +13,7 @@ import {durableHello,
   getDODatabaseStatus,
   resetDoKeyStorageAndSqlite,
   getArticleContentList,
+  durableSearchSimilarTitlesInVectorIndex,
 } from "@/durable/callDurable"
 import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
 import { getUserById } from "@/infrastructure/user";
@@ -460,4 +461,23 @@ export async function getStoragePreferenceHandler(c: Context<{ Bindings: Env, Va
     console.error('getStoragePreferenceHandler error:', error)
     return c.json({ error: 'Internal Server Error' }, 500)
   }
+}
+
+export async function durableSearchSimilarTitlesInVectorIndexHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+    try {
+        const body = await c.req.json()
+        const { query, topK } = body
+        if (!query || typeof query !== 'string') {
+            return c.json({ error: 'Query must be a non-empty string' }, 400)
+        }
+        if (!topK || typeof topK !== 'number' || topK <= 0) {
+            return c.json({ error: 'topK must be a positive integer' }, 400)
+        }
+        const similarTitles = await durableSearchSimilarTitlesInVectorIndex(c, { query, topK })
+        return c.json(similarTitles)
+    } catch (err) {
+        console.error('Error in durableSearchSimilarTitlesInVectorIndexHandler:', err)
+        return c.json({ error: 'Internal Server Error' }, 500)
+    } 
+
 }

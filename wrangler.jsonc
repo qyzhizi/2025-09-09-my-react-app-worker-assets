@@ -6,7 +6,8 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "worker-assets-durableobject",
 	"main": "worker/index.ts",
-	"compatibility_date": "2025-09-09",
+	// "compatibility_date": "2025-09-09",
+	"compatibility_date": "2026-04-24",
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
@@ -99,5 +100,50 @@
 		"binding": "memoflow_worker",
 		"service": "memoflow_worker"
 		}
-	]
+	],
+	"ai": {
+ 	   "binding": "AI"
+	},
+	"vectorize": [
+    {
+      "binding": "MEMOFLOW_INDEX_0",
+      "index_name": "memoflow-index-0"
+    },
+    {
+      "binding": "MEMOFLOW_INDEX_1",
+      "index_name": "memoflow-index-1"
+    },
+    {
+      "binding": "MEMOFLOW_INDEX_2",
+      "index_name": "memoflow-index-2"
+    },
+    {
+      "binding": "MEMOFLOW_INDEX_3",
+      "index_name": "memoflow-index-3"
+    },
+    {
+      "binding": "MEMOFLOW_INDEX_4",
+      "index_name": "memoflow-index-4"
+    },
+    {
+      "binding": "MEMOFLOW_INDEX_5",
+      "index_name": "memoflow-index-5"
+    },
+    {
+      "binding": "MEMOFLOW_INDEX_6",
+      "index_name": "memoflow-index-6"
+    },
+    {
+      "binding": "MEMOFLOW_INDEX_7",
+      "index_name": "memoflow-index-7"
+    },
+    {
+      "binding": "MEMOFLOW_INDEX_8",
+      "index_name": "memoflow-index-8"
+    },
+    {
+      "binding": "MEMOFLOW_INDEX_9",
+      "index_name": "memoflow-index-9"
+    }
+  ]
 }

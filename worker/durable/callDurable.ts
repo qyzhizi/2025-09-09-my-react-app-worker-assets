@@ -52,7 +52,7 @@ export const durablePushToGitHub = async (c: Context,
     
     // Offload time-consuming tasks to DO without blocking HTTP responses
     c.executionCtx.waitUntil(
-        stub.processGithubPushTask(taskId)
+        stub.processGithubPushTask(taskId, c.get("userId"))
         .catch((err: any) => {
             // Note: The errors here will no longer be passed to the user request and can only be recorded by yourself.
             console.error("Background DO task failed:", err);
@@ -98,6 +98,32 @@ export const durableSearchCommits = async (c: Context,
         return commits
     } catch (err) {
         console.error('Unexpected error in searchCommits:', err)
+        return c.text('Internal Server Error', 500)
+    }
+}
+
+export const durableSearchSimilarTitlesInVectorIndex = async (c: Context,
+    {
+        query,
+        topK,
+    }: {
+        query: string;
+        topK: number;
+    }): Promise<any> => {
+    const userId = c.get("userId");
+    if (!userId) {
+        return c.text('User ID is required', 400);
+    }
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+        `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
+    const stub = c.env.MY_DURABLE_OBJECT.get(doId)
+
+    try {
+        const similarTitles = await stub.searchSimilarTitlesInVectorIndex(
+            query, topK, userId)
+        return similarTitles
+    } catch (err) {
+        console.error('Unexpected error in searchSimilarTitlesInVectorIndex:', err)
         return c.text('Internal Server Error', 500)
     }
 }

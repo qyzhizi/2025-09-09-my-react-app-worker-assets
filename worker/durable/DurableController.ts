@@ -9,9 +9,12 @@ import { createEmptyFolderPathInRepoIfNotExists } from "@/durable/github/githubA
 import { searchCommits } from "@/durable/github/searchCommits";
 import type { SearchCommitResult } from "@/durable/github/searchCommits";
 import { COMMITFILTER, PER_PAGE } from "@/ConstVar";
-import { edgeHash64 } from "@/durable/titleHash"
+import { edgeHash64, mapUuidQuick } from "@/durable/titleHash"
 
 const MAX_ARTICLES_TO_STORE = 1000;
+
+const EMBEDDING_MODEL = '@cf/qwen/qwen3-embedding-0.6b'
+const INDEX_NAME_PREFIX = 'MEMOFLOW_INDEX_'
 
 /** A Durable Object's behavior is defined in an exported Javascript class */
 export class MyDurableObject extends DurableObject<Env> {
@@ -152,21 +155,21 @@ export class MyDurableObject extends DurableObject<Env> {
 
     }
 
-    async processGithubPushTask(taskId: string): Promise<PushGitRepoTaskRespon> {
+    async processGithubPushTask(taskId: string, userId: string): Promise<PushGitRepoTaskRespon> {
         /** Use Promise chain to serialize all GitHub pushes, avoiding concurrent submissions on the same branch leading to 409.
          * Principle: GitHub Contents API creates a new commit for each PUT,
          * If two PUTs are concurrently based on the same HEAD commit, the later one will result in 409.
          * Even if different files are written, conflicts can still occur because conflicts happen at the Git branch level, not the file level.
          */
         const promise = this.githubPushQueue.then(() =>
-            this._doProcessGithubPushTask(taskId)
+            this._doProcessGithubPushTask(taskId, userId)
         );
         //Regardless of success or failure, update the end of the queue (use catch to prevent chain breaks)
         this.githubPushQueue = promise.catch(() => {});
         return promise;
     }
 
-    private async _doProcessGithubPushTask(taskId: string): Promise<PushGitRepoTaskRespon> {
+    private async _doProcessGithubPushTask(taskId: string, userId: string): Promise<PushGitRepoTaskRespon> {
         const taskParams = await this.state.storage.get<PushGitRepoTaskParams>(taskId);
         if (!taskParams) {
             throw new NotFoundError(`Task with taskId=${taskId} not found`);
@@ -196,7 +199,87 @@ export class MyDurableObject extends DurableObject<Env> {
 
         // Delete a processed task
         await this.deleteTask(taskId);
+        
+        // Get title embedding and save to vector index
+        if (title && title.trim()) {
+            try {
+                // Generate embedding for title using AI binding
+                const embeddings = await this.env.AI.run(EMBEDDING_MODEL as any, {
+                    text: [title],
+                });
+                console.log("Generated embeddings for title:", embeddings);
+                
+                // Check if embeddings has data (not an async response)
+                if ('data' in embeddings && Array.isArray(embeddings.data) && embeddings.data.length > 0) {
+                    // Get vector index number using mapUuidQuick (maps to 0-9)
+                    const indexNumber = mapUuidQuick(userId, 10);
+                    const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
+                    const vectorIndex = this.env[vectorIndexKey] as VectorizeIndex;
+                    
+                    // Insert embedding into the vector index
+                    if (vectorIndex) {
+                        await vectorIndex.insert([
+                            {
+                                id: titleHash,
+                                values: embeddings.data[0],
+                                metadata: { title },
+                            },
+                        ]);
+                        console.log(`Embedding saved to vector index ${indexNumber} with id: ${titleHash}`);
+
+                        // Wait for the index to process the new embedding before querying
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    }
+                } else {
+                    console.warn('AI returned async response or no data, skipping embedding storage');
+                }
+            } catch (error) {
+                console.error('Failed to save embedding to vector index:', error);
+                // Continue even if embedding fails - don't block the main flow
+            }
+        }
+
         return { "taskId": taskId, "completed": true };
+    }
+
+    async searchSimilarTitlesInVectorIndex(query: string, topK: number, userId: string): Promise<any> {
+        try {
+            const embeddings = await this.env.AI.run(EMBEDDING_MODEL as any, {
+                text: [query],
+            });
+            
+            if ('data' in embeddings && Array.isArray(embeddings.data) && embeddings.data.length > 0) {
+                const indexNumber = mapUuidQuick(userId, 10);
+                const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
+                const vectorIndex = this.env[vectorIndexKey] as VectorizeIndex;
+
+                if (vectorIndex) {
+                    const queryResult = await vectorIndex.query(
+                        embeddings.data[0],
+                        { topK: topK, 
+                          returnValues: true,
+                          returnMetadata: "all", }
+                    );
+                    // Transform results to return only id, score, metadata in order
+                    const transformedResults = queryResult.matches?.map((match: any) => ({
+                        id: match.id,
+                        score: match.score,
+                        metadata: match.metadata,
+                    })) || [];
+                    return transformedResults;
+                } else {
+                    console.warn(`Vector index ${indexNumber} not found for userId: ${userId}`);
+                    return null;
+                }
+            } else {
+                console.warn('AI returned async response or no data for search query');
+                return null;
+            }
+        } catch (error) {
+            console.error('Failed to search vector index:', error);
+            return null;
+        }
+
     }
 
     /**

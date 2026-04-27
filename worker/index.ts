@@ -27,6 +27,7 @@ import {
   getDODatabaseStatusHandler,
   resetDoKeyStorageAndSqliteHandler,
   getArticleContentListHandler,
+  durableSearchSimilarTitlesInVectorIndexHandler,
  } from '@/handler'
 
  import {
@@ -80,6 +81,7 @@ app.get('/get-githubapp-installation-repositories', getGitHubAppInstallationRepo
 app.get('/do-database-status', getDODatabaseStatusHandler)
 app.get('/reset-durable-object', resetDoKeyStorageAndSqliteHandler)
 app.get('/github-app/search-commits', searchCommitsHandler)
+app.post('/search-similar-titles', durableSearchSimilarTitlesInVectorIndexHandler)
 // Export scheduled method independently
 export default {
   fetch: app.fetch,  // Export app.fetch as fetch function

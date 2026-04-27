@@ -6,11 +6,10 @@ import { useSearchParams } from "@/RouterLite";
 
 
 type SearchCommitItem = {
-  sha: string;
-  date: string | null;
-  author: string;
-  message: string;
-  source: "search" | "recent";
+  id: string;
+  score: number;
+  metadata: { title: string };
+  source?: "search" | "recent";
 };
 
 const SearchLogs = () => {
@@ -34,13 +33,23 @@ const SearchLogs = () => {
         setLoading(true);
         setError(null);
         const response = await apiFetch(
-          `/api/github-app/search-commits?commitFilter=${encodeURIComponent(keyword)}`
+          `/api/search-similar-titles`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              query: keyword,
+              topK: 10
+            })
+          }
         );
         if (!response.ok) {
           throw new Error("Failed to fetch search results");
         }
         const data = (await response.json()) as { commits?: SearchCommitItem[] };
-        setCommits(Array.isArray(data.commits) ? data.commits : []);
+        setCommits(Array.isArray(data) ? data : []);
       } catch (err) {
         console.error("Failed to fetch search results:", err);
         setError(err instanceof Error ? err.message : "Unknown error");
@@ -54,9 +63,7 @@ const SearchLogs = () => {
 
   const sortedCommits = useMemo(() => {
     return [...commits].sort((a, b) => {
-      const timeA = a.date ? new Date(a.date).getTime() : 0;
-      const timeB = b.date ? new Date(b.date).getTime() : 0;
-      return timeB - timeA;
+      return b.score - a.score;
     });
   }, [commits]);
 
@@ -95,22 +102,19 @@ const SearchLogs = () => {
         <div className="w-full flex flex-col gap-2 mt-2">
           {sortedCommits.map((item) => (
             <div
-              key={item.sha}
+              key={item.id}
               className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-900"
             >
               <div className="flex items-center justify-between mb-1 gap-2">
-                <span className="text-xs text-gray-400 dark:text-gray-500 truncate">
-                  {item.date ? new Date(item.date).toLocaleString() : "Unknown date"}
+                <span className="text-xs text-gray-400 dark:text-gray-500 truncate font-medium">
+                  {item.metadata.title}
                 </span>
-                <span className="text-xs text-gray-400 dark:text-gray-500">
-                  {item.source}
+                <span className="text-xs text-blue-500 dark:text-blue-400 font-semibold">
+                  {(item.score * 100).toFixed(1)}%
                 </span>
-              </div>
-              <div className="text-sm text-gray-800 dark:text-gray-200 break-words">
-                {item.message}
               </div>
               <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {item.author} · {item.sha.slice(0, 8)}
+                ID: {item.id}
               </div>
             </div>
           ))}
