@@ -17,8 +17,9 @@ const SearchLogs = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { q = "" } = useSearchParams(); // ?q=
+  const { q = "", t = "" } = useSearchParams(); // ?q= & ?t=
   const keyword = q.trim();
+  const time = t.trim();
 
   useEffect(() => {
     const fetchSearchResults = async () => {
@@ -59,7 +60,7 @@ const SearchLogs = () => {
     };
 
     void fetchSearchResults();
-  }, [keyword]);
+  }, [keyword, time]);
 
   const sortedCommits = useMemo(() => {
     return [...commits].sort((a, b) => {

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 
 // Top bar stays in layout; hamburger uses md breakpoint like Header sidebar.
 export const TopBar = ({
@@ -9,12 +9,6 @@ export const TopBar = ({
   onSearch: (query: string) => void;
 }) => {
   const [query, setQuery] = useState("");
-
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const trimmed = query.trim();
-    onSearch(trimmed);
-  };
 
   return (
     <div className="sticky top-0 z-30 w-full h-14 shrink-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 px-4 shadow-sm">
@@ -30,9 +24,8 @@ export const TopBar = ({
         </svg>
       </button>
 
-      <form
+      <div
         className="flex-1 flex justify-end min-w-0"
-        onSubmit={handleSubmit}
         role="search"
       >
         <div className="flex w-full max-w-md items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/80 px-2 focus-within:ring-2 focus-within:ring-blue-500/30 dark:focus-within:ring-blue-400/30">
@@ -47,9 +40,19 @@ export const TopBar = ({
             placeholder="Search…"
             className="min-w-0 flex-1 bg-transparent py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 outline-none"
             autoComplete="off"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const trimmed = query.trim();
+                onSearch(trimmed);
+              }
+            }}
           />
           <button
-            type="submit"
+            type="button"
+            onClick={() => {
+              const trimmed = query.trim();
+              onSearch(trimmed);
+            }}
             className="shrink-0 rounded p-1.5 text-gray-600 hover:bg-gray-200/80 dark:text-gray-300 dark:hover:bg-gray-700"
             aria-label="Submit search"
           >
@@ -60,7 +63,7 @@ export const TopBar = ({
             </svg>
           </button>
         </div>
-      </form>
+      </div>
     </div>
   );
 };

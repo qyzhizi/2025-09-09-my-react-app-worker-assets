@@ -22,7 +22,8 @@ export const App = ({ children }: { children: any }) => {
       navigate("/", true);
       return;
     }
-    navigate(`/search?q=${encodeURIComponent(trimmed)}`, true);
+    const timestamp = Date.now();
+    navigate(`/search?q=${encodeURIComponent(trimmed)}&t=${timestamp}`, true);
   };
 
   return (

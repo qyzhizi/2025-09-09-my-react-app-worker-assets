@@ -211,21 +211,22 @@ export class MyDurableObject extends DurableObject<Env> {
                 
                 // Check if embeddings has data (not an async response)
                 if ('data' in embeddings && Array.isArray(embeddings.data) && embeddings.data.length > 0) {
-                    // Get vector index number using mapUuidQuick (maps to 0-9)
+                    // Get vector index number using mapUuidQuick (maps to 0-9) to distribute load
                     const indexNumber = mapUuidQuick(userId, 10);
                     const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
                     const vectorIndex = this.env[vectorIndexKey] as VectorizeIndex;
                     
-                    // Insert embedding into the vector index
+                    // Insert embedding into the vector index with userId as namespace
                     if (vectorIndex) {
                         await vectorIndex.insert([
                             {
                                 id: titleHash,
                                 values: embeddings.data[0],
                                 metadata: { title },
+                                namespace: userId,
                             },
-                        ]);
-                        console.log(`Embedding saved to vector index ${indexNumber} with id: ${titleHash}`);
+                        ],);
+                        console.log(`Embedding saved to vector index ${indexNumber} (namespace: userId with id: ${titleHash}`);
 
                         // Wait for the index to process the new embedding before querying
                         await new Promise(resolve => setTimeout(resolve, 300));
@@ -258,7 +259,8 @@ export class MyDurableObject extends DurableObject<Env> {
                         embeddings.data[0],
                         { topK: topK, 
                           returnValues: true,
-                          returnMetadata: "all", }
+                          returnMetadata: "all",
+                          namespace: userId }
                     );
                     // Transform results to return only id, score, metadata in order
                     const transformedResults = queryResult.matches?.map((match: any) => ({
