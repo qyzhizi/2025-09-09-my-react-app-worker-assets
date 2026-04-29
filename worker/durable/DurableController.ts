@@ -10,6 +10,7 @@ import { searchCommits } from "@/durable/github/searchCommits";
 import type { SearchCommitResult } from "@/durable/github/searchCommits";
 import { COMMITFILTER, PER_PAGE } from "@/ConstVar";
 import { edgeHash64, mapUuidQuick } from "@/durable/titleHash"
+import type { UpsertArticleContentParams } from "@/durable/repository/types";
 
 const MAX_ARTICLES_TO_STORE = 1000;
 
@@ -115,6 +116,7 @@ export class MyDurableObject extends DurableObject<Env> {
         // save content to DO SQL for later query and analysis
         console.log("Saving content to Durable Object SQL:", data.content);
         await this.saveContentToDOSql(
+            params.id,
             params.title,
             params.createdAt,
             params.content
@@ -131,7 +133,7 @@ export class MyDurableObject extends DurableObject<Env> {
         return task;
     }
 
-    async saveContentToDOSql(title: string, date: string, content: string): Promise<any> {
+    async saveContentToDOSql(id: string, title: string, date: string, content: string): Promise<any> {
         // 参数验证
         if (title === undefined || title === null || title === '') {
             console.warn("Warning: title is empty, using default");
@@ -144,7 +146,8 @@ export class MyDurableObject extends DurableObject<Env> {
             throw new Error("date cannot be empty");
         }
 
-        const id = await this.insertArticleContent({
+        await this.upsertArticleContent({
+            id,
             title,
             date,
             content
@@ -478,6 +481,12 @@ export class MyDurableObject extends DurableObject<Env> {
     }): Promise<{ id: string }> {
         console.log("Inserting article content:", params);
         return this.sqliteRepository.insertArticleContent(params);
+    }
+
+    // upsert article content by id, if id exists, update; if not, insert new record
+    async upsertArticleContent(params: UpsertArticleContentParams): Promise<{ id: string }> {
+        console.log("Upserting article content:", params);
+        return this.sqliteRepository.upsertArticleContent(params);
     }
 
     /**

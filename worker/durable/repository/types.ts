@@ -37,6 +37,13 @@ export interface UpdateArticleContentParams {
     content: string;
 }
 
+export interface UpsertArticleContentParams {
+    id: string;
+    title: string;
+    date: string;
+    content: string;
+}
+
 export interface InsertResult {
     id: string;
 }

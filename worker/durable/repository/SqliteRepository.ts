@@ -8,6 +8,7 @@ import type {
     ArticleContent,
     InsertArticleContentParams,
     UpdateArticleContentParams,
+    UpsertArticleContentParams,
     InsertResult,
 } from "./types";
 
@@ -203,6 +204,68 @@ export class SqliteRepository {
 
         // Check whether the storage limit is exceeded
         await this.enforceArticleCountLimit();
+
+        return { id };
+    }
+
+    /**
+     * Insert or update article content (upsert)
+     * If id exists, update the content and title; otherwise insert a new record
+     * Only increments counter when inserting new records
+     * 
+     * @param params - UpsertArticleContentParams with id, title, date, content
+     * @returns InsertResult with the id
+     */
+    async upsertArticleContent(
+        params: UpsertArticleContentParams
+    ): Promise<InsertResult> {
+        const { id, title, date, content } = params;
+
+        // param validation
+        if (id === undefined || id === null) {
+            throw new Error(`Invalid id: ${id}`);
+        }
+        if (title === undefined || title === null) {
+            throw new Error(`Invalid title: ${title}`);
+        }
+        if (content === undefined || content === null) {
+            throw new Error(`Invalid content: ${content}`);
+        }
+        if (date === undefined || date === null) {
+            throw new Error(`Invalid date: ${date}`);
+        }
+
+        // Check if record already exists
+        const existingRecord = await this.queryArticleContentById(id);
+        const isNewRecord = !existingRecord;
+
+        // Insert or update using ON CONFLICT
+        this.sql.exec(
+            `INSERT INTO articleContent (id, title, content, createdAt)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                content = excluded.content`,
+            id,
+            title,
+            content,
+            date,
+        );
+
+        console.log(`${isNewRecord ? 'Inserting' : 'Updating'} article content with id=${id}, title=${title}, date=${date}, content length=${content.length}`);
+
+        // Update count table only if it's a new record
+        if (isNewRecord) {
+            try {
+                this.incrementTableCount('articleContent', 1);
+            } catch (error) {
+                console.error(`Failed to update count table:`, error);
+                throw error;
+            }
+
+            // Check whether the storage limit is exceeded
+            await this.enforceArticleCountLimit();
+        }
 
         return { id };
     }

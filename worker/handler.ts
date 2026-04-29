@@ -1,5 +1,4 @@
 import type { Context } from "hono";
-import { nanoid } from 'nanoid'
 import { setCookie } from "hono/cookie";
 import { sign } from "hono/jwt";
 import { z } from 'zod'
@@ -29,6 +28,7 @@ import { getMetaDataFromContent } from "@/common"
 import { NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
 import {type GithubRepoAccess} from "@/infrastructure/types";
+import { edgeHash64 } from "@/durable/titleHash"
 
 const VALIDATION_TARGET = {
   QUERY: "query",
@@ -274,7 +274,6 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       return c.json({ error: 'Empty content' }, 400)
     }
 
-    const taskId = nanoid()
     // const now = new Date().toISOString()
     const { title: extractedTitle, date: extractedDate } = getMetaDataFromContent(content)
     if (!extractedDate){
@@ -285,6 +284,7 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
     if (!title) {
       title = extractedDate
     }
+    const taskId = edgeHash64(title)
 
     const logEntry = {
       message: "[NEW] by memoflow",
