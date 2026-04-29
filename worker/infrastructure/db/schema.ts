@@ -69,12 +69,6 @@ export const githubRepoAccess = sqliteTable("github_access", {
   vaultName: text("vault_name", { length: 255 })
     .notNull()
     .default("memoflowVault"),
-  folderIndexInVault: integer("folder_index_in_vault")
-    .notNull()
-    .default(0),
-  fileIndexInFolder: integer("file_index_in_folder")
-    .notNull()
-    .default(0),
 });
 
 

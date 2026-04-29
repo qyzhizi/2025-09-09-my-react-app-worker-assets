@@ -71,6 +71,13 @@
       "when": 1772460402961,
       "tag": "0009_minor_pretty_boy",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1777452496152,
+      "tag": "0010_dashing_shadowcat",
+      "breakpoints": true
     }
   ]
 }

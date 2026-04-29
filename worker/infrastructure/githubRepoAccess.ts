@@ -116,5 +116,5 @@ export const getVaultInfo = async (c: Context) => {
     throw new Error(`githubRepoAccess record not found for userId: ${userId}`);
   }
   // if vaultName is already set, do nothing
-  return {vaultName: existing.vaultName, folderIndexInVault: existing.folderIndexInVault, fileIndexInFolder: existing.fileIndexInFolder};
+  return {vaultName: existing.vaultName};
 };

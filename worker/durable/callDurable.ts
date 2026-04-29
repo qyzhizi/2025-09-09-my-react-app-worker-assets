@@ -121,6 +121,7 @@ export const durableSearchSimilarTitlesInVectorIndex = async (c: Context,
     try {
         const similarTitles = await stub.searchSimilarTitlesInVectorIndex(
             query, topK, userId)
+        
         return similarTitles
     } catch (err) {
         console.error('Unexpected error in searchSimilarTitlesInVectorIndex:', err)

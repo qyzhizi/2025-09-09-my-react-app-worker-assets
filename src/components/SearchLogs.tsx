@@ -12,10 +12,22 @@ type SearchCommitItem = {
   source?: "search" | "recent";
 };
 
+type SearchResponse = {
+  similarTitles: SearchCommitItem[];
+  githubUserName: string;
+  githubRepoName: string;
+  vaultPathInRepo: string;
+  vaultName: string;
+};
+
 const SearchLogs = () => {
   const [commits, setCommits] = useState<SearchCommitItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [githubUserName, setGithubUserName] = useState<string>("");
+  const [githubRepoName, setGithubRepoName] = useState<string>("");
+  const [vaultPathInRepo, setVaultPathInRepo] = useState<string>("");
+  const [vaultName, setVaultName] = useState<string>("");
 
   const { q = "", t = "" } = useSearchParams(); // ?q= & ?t=
   const keyword = q.trim();
@@ -49,8 +61,12 @@ const SearchLogs = () => {
         if (!response.ok) {
           throw new Error("Failed to fetch search results");
         }
-        const data = (await response.json()) as { commits?: SearchCommitItem[] };
-        setCommits(Array.isArray(data) ? data : []);
+        const data = (await response.json()) as SearchResponse;
+        setCommits(data.similarTitles ?? []);
+        setGithubUserName(data.githubUserName);
+        setGithubRepoName(data.githubRepoName);
+        setVaultPathInRepo(data.vaultPathInRepo);
+        setVaultName(data.vaultName);
       } catch (err) {
         console.error("Failed to fetch search results:", err);
         setError(err instanceof Error ? err.message : "Unknown error");
@@ -117,6 +133,18 @@ const SearchLogs = () => {
               <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 ID: {item.id}
               </div>
+              {githubUserName && githubRepoName && (
+                <div className="mt-2">
+                  <a
+                    href={`https://github.com/${githubUserName}/${githubRepoName}/blob/main/${vaultPathInRepo}/${vaultName}/${item.id.slice(0, 2)}/${item.id.slice(2, 4)}/${item.id.slice(4)}.md`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
+                  >
+                    {vaultPathInRepo}/{vaultName}/{item.id.slice(0, 2)}/{item.id.slice(2, 4)}/{item.id.slice(4)}.md
+                  </a>
+                </div>
+              )}
             </div>
           ))}
         </div>

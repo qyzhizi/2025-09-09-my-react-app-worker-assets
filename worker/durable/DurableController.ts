@@ -207,7 +207,7 @@ export class MyDurableObject extends DurableObject<Env> {
                 const embeddings = await this.env.AI.run(EMBEDDING_MODEL as any, {
                     text: [title],
                 });
-                console.log("Generated embeddings for title:", embeddings);
+                console.log("Generated embeddings for title:", title);
                 
                 // Check if embeddings has data (not an async response)
                 if ('data' in embeddings && Array.isArray(embeddings.data) && embeddings.data.length > 0) {
@@ -218,7 +218,7 @@ export class MyDurableObject extends DurableObject<Env> {
                     
                     // Insert embedding into the vector index with userId as namespace
                     if (vectorIndex) {
-                        await vectorIndex.insert([
+                        await vectorIndex.upsert([
                             {
                                 id: titleHash,
                                 values: embeddings.data[0],
@@ -268,6 +268,7 @@ export class MyDurableObject extends DurableObject<Env> {
                         score: match.score,
                         metadata: match.metadata,
                     })) || [];
+                    console.log(`Search query: "${query}" returned ${transformedResults.length} results from vector index ${indexNumber}`);
                     return transformedResults;
                 } else {
                     console.warn(`Vector index ${indexNumber} not found for userId: ${userId}`);

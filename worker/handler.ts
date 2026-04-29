@@ -382,8 +382,8 @@ export async function resetDoKeyStorageAndSqliteHandler(c: Context<{ Bindings: E
 }
 
 export async function getVaultInfoHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
-  const {vaultName, folderIndexInVault, fileIndexInFolder} = await getVaultInfo(c)
-  return c.json({vaultName, folderIndexInVault, fileIndexInFolder})
+  const {vaultName} = await getVaultInfo(c)
+  return c.json({vaultName})
 }
 
 
@@ -394,7 +394,7 @@ export async function getGitHubRepoInfoHandler(c:Context<{Bindings: Env, Variabl
   const githubUserName = githubAccessInfo?.githubUserName ?? null
   const vaultPathInRepo = githubAccessInfo?.vaultPathInRepo ?? null
   const vaultName = githubAccessInfo?.vaultName ?? null
-  const vaultInfo = { vaultName, folderIndexInVault: null, fileIndexInFolder: null }
+  const vaultInfo = { vaultName }
   return c.json({githubUserName, githubRepoName, vaultPathInRepo, vaultInfo})
 }
 
@@ -465,19 +465,54 @@ export async function getStoragePreferenceHandler(c: Context<{ Bindings: Env, Va
 
 export async function durableSearchSimilarTitlesInVectorIndexHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
     try {
+        // Validate and extract request body
         const body = await c.req.json()
         const { query, topK } = body
-        if (!query || typeof query !== 'string') {
+
+        // Validate query parameter
+        if (!query || typeof query !== 'string' || query.trim() === '') {
             return c.json({ error: 'Query must be a non-empty string' }, 400)
         }
-        if (!topK || typeof topK !== 'number' || topK <= 0) {
-            return c.json({ error: 'topK must be a positive integer' }, 400)
+
+        // Validate topK parameter with reasonable limits
+        const MAX_TOP_K = 50
+        if (!topK || typeof topK !== 'number' || topK <= 0 || topK > MAX_TOP_K) {
+            return c.json({ error: `topK must be a positive integer between 1 and ${MAX_TOP_K}` }, 400)
         }
+
+        // Search for similar titles in vector index
         const similarTitles = await durableSearchSimilarTitlesInVectorIndex(c, { query, topK })
-        return c.json(similarTitles)
+        console.log('similarTitles from durableSearchSimilarTitlesInVectorIndex:', similarTitles)
+        
+        // Validate similarTitles response
+        if (!similarTitles) {
+            console.warn('durableSearchSimilarTitlesInVectorIndex returned empty result')
+            return c.json({ error: 'No search results found' }, 404)
+        }
+
+        // Get GitHub access information
+        let githubAccessInfo: GithubRepoAccess | undefined
+        try {
+            githubAccessInfo = await getgithubRepoAccessInfo(c)
+        } catch (githubError) {
+            console.error('Error fetching GitHub access info:', githubError)
+            // Return search results even if GitHub info fails
+            githubAccessInfo = undefined
+        }
+
+        // Construct response with search results and GitHub info
+        const response = {
+            similarTitles,
+            githubUserName: githubAccessInfo?.githubUserName ?? null,
+            githubRepoName: githubAccessInfo?.githubRepoName ?? null,
+            vaultPathInRepo: githubAccessInfo?.vaultPathInRepo ?? null,
+            vaultName: githubAccessInfo?.vaultName ?? null,
+        }
+
+        return c.json(response, 200)
     } catch (err) {
         console.error('Error in durableSearchSimilarTitlesInVectorIndexHandler:', err)
-        return c.json({ error: 'Internal Server Error' }, 500)
-    } 
-
+        const errorMessage = err instanceof Error ? err.message : 'Internal Server Error'
+        return c.json({ error: errorMessage }, 500)
+    }
 }

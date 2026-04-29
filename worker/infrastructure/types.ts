@@ -10,8 +10,6 @@ export interface GithubRepoAccess {
   refreshTokenExpiresAt: Date | null;
   githubUserName: string | null;
   vaultName: string;
-  folderIndexInVault: number;
-  fileIndexInFolder: number;
 }
 
 export interface CreateGithubRepoAccess {
