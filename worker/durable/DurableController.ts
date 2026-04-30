@@ -13,6 +13,7 @@ import { edgeHash64, mapUuidQuick } from "@/durable/titleHash"
 import type { UpsertArticleContentParams } from "@/durable/repository/types";
 
 const MAX_ARTICLES_TO_STORE = 1000;
+const SEARCH_COMMITS_THRESHOLD = 100;
 
 const EMBEDDING_MODEL = '@cf/qwen/qwen3-embedding-0.6b'
 const INDEX_NAME_PREFIX = 'MEMOFLOW_INDEX_'
@@ -475,6 +476,7 @@ export class MyDurableObject extends DurableObject<Env> {
      * Insert a new article content record into the articleContent table
      */
     async insertArticleContent(params: {
+        id: string;
         title: string;
         date: string;
         content: string;
@@ -585,7 +587,7 @@ export class MyDurableObject extends DurableObject<Env> {
             githubUserName,
             githubRepoName,
             accessToken,
-            threshold:20,
+            threshold: SEARCH_COMMITS_THRESHOLD,
             searchPath:`${vaultPathInRepo}/${vaultName}/`,
             commitFilter:"[NEW] by memoflow",
             perPage:20,
@@ -605,7 +607,9 @@ export class MyDurableObject extends DurableObject<Env> {
         console.log("FileContents: ", FileContents.slice(0, 10));
         const articleParamsList = FileContents.map((fileContent) => {
             const { title, date } = getMetaDataFromContent(fileContent.content);
+            const articleId = edgeHash64(title || fileContent.path);
             return {
+                id: articleId,
                 title: title || date,
                 date: date,
                 content: fileContent.content,

@@ -12,7 +12,6 @@ import type {
     InsertResult,
 } from "./types";
 
-import { v4 as uuidv4 } from "uuid";
 
 
 export class SqliteRepository {
@@ -169,8 +168,7 @@ export class SqliteRepository {
     async insertArticleContent(
         params: InsertArticleContentParams
     ): Promise<InsertResult> {
-        const { title, date, content } = params;
-        const id = uuidv4();
+        const { id, title, date, content } = params;
         
         // param validation
         if (title === undefined || title === null) {
@@ -245,7 +243,8 @@ export class SqliteRepository {
             VALUES (?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
-                content = excluded.content`,
+                content = excluded.content,
+                createdAt = excluded.createdAt`,
             id,
             title,
             content,
@@ -291,7 +290,7 @@ export class SqliteRepository {
         // Assign sequential createdAt timestamps so each record has a distinct creation time
         const prepared: Array<{ id: string; title: string; content: string; createdAt: string }> = [];
         for (let idx = 0; idx < paramsList.length; idx++) {
-            const { title, date: createdAt, content } = paramsList[idx];
+            const { id, title, date: createdAt, content } = paramsList[idx];
             if (title === undefined || title === null) {
                 throw new Error(`Invalid title: ${title}`);
             }
@@ -302,7 +301,7 @@ export class SqliteRepository {
                 throw new Error(`Invalid content: ${createdAt}`);
             }
             // Each record gets baseTime + idx milliseconds, formatted as ISO 8601 string
-            prepared.push({ id: uuidv4(), title, content, createdAt });
+            prepared.push({ id, title, content, createdAt });
         }
 
         // SQLite has a default SQLITE_MAX_VARIABLE_NUMBER limit (typically 999).
