@@ -73,4 +73,25 @@ jobs:
             fi
 
             echo "✅ Created $INDEX_NAME"
+
+            # Create repoName metadata index
+            echo "➕ Creating repoName metadata index for $INDEX_NAME..."
+            metadata_response=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes/$INDEX_NAME/metadata_index/create" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -d '{
+                    "indexType": "string",
+                    "propertyName": "repoName"
+                  }')
+
+            # check success field of metadata API response
+            metadata_success=$(echo "$metadata_response" | jq -r '.success')
+
+            if [ "$metadata_success" != "true" ]; then
+              echo "❌ Failed to create repoName metadata index for $INDEX_NAME"
+              echo "Response detail: $metadata_response"
+              exit 1
+            fi
+
+            echo "✅ Created repoName metadata index for $INDEX_NAME"
           done

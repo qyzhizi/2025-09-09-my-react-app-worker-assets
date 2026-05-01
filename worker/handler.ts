@@ -480,16 +480,6 @@ export async function durableSearchSimilarTitlesInVectorIndexHandler(c: Context<
             return c.json({ error: `topK must be a positive integer between 1 and ${MAX_TOP_K}` }, 400)
         }
 
-        // Search for similar titles in vector index
-        const similarTitles = await durableSearchSimilarTitlesInVectorIndex(c, { query, topK })
-        console.log('similarTitles from durableSearchSimilarTitlesInVectorIndex:', similarTitles)
-        
-        // Validate similarTitles response
-        if (!similarTitles) {
-            console.warn('durableSearchSimilarTitlesInVectorIndex returned empty result')
-            return c.json({ error: 'No search results found' }, 404)
-        }
-
         // Get GitHub access information
         let githubAccessInfo: GithubRepoAccess | undefined
         try {
@@ -499,6 +489,19 @@ export async function durableSearchSimilarTitlesInVectorIndexHandler(c: Context<
             // Return search results even if GitHub info fails
             githubAccessInfo = undefined
         }
+
+        // Search for similar titles in vector index
+        const repoNameForSearch = githubAccessInfo?.githubRepoName ?? ''
+        const similarTitles = await durableSearchSimilarTitlesInVectorIndex(
+          c, { query, topK, repoName: repoNameForSearch})
+        console.log('similarTitles from durableSearchSimilarTitlesInVectorIndex:', similarTitles)
+        
+        // Validate similarTitles response
+        if (!similarTitles) {
+            console.warn('durableSearchSimilarTitlesInVectorIndex returned empty result')
+            return c.json({ error: 'No search results found' }, 404)
+        }
+
 
         // Construct response with search results and GitHub info
         const response = {

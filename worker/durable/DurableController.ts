@@ -226,7 +226,7 @@ export class MyDurableObject extends DurableObject<Env> {
                             {
                                 id: titleHash,
                                 values: embeddings.data[0],
-                                metadata: { title },
+                                metadata: { title, repoName },
                                 namespace: userId,
                             },
                         ],);
@@ -247,7 +247,7 @@ export class MyDurableObject extends DurableObject<Env> {
         return { "taskId": taskId, "completed": true };
     }
 
-    async searchSimilarTitlesInVectorIndex(query: string, topK: number, userId: string): Promise<any> {
+    async searchSimilarTitlesInVectorIndex(query: string, topK: number, userId: string, repoName: string): Promise<any> {
         try {
             const embeddings = await this.env.AI.run(EMBEDDING_MODEL as any, {
                 text: [query],
@@ -262,9 +262,11 @@ export class MyDurableObject extends DurableObject<Env> {
                     const queryResult = await vectorIndex.query(
                         embeddings.data[0],
                         { topK: topK, 
+                          namespace: userId, 
+                          filter: { repoName: repoName }, // Filter results by repoName in metadata
                           returnValues: true,
                           returnMetadata: "all",
-                          namespace: userId }
+                        }
                     );
                     // Transform results to return only id, score, metadata in order
                     const transformedResults = queryResult.matches?.map((match: any) => ({

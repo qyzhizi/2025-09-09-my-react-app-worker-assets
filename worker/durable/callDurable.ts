@@ -106,9 +106,11 @@ export const durableSearchSimilarTitlesInVectorIndex = async (c: Context,
     {
         query,
         topK,
+        repoName,
     }: {
         query: string;
         topK: number;
+        repoName: string;
     }): Promise<any> => {
     const userId = c.get("userId");
     if (!userId) {
@@ -120,7 +122,7 @@ export const durableSearchSimilarTitlesInVectorIndex = async (c: Context,
 
     try {
         const similarTitles = await stub.searchSimilarTitlesInVectorIndex(
-            query, topK, userId)
+            query, topK, userId, repoName);
         
         return similarTitles
     } catch (err) {
