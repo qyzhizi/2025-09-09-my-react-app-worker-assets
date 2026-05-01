@@ -3,6 +3,10 @@ name: Ensure Multiple Cloudflare Vector Indexes
 on:
   workflow_dispatch:
 
+concurrency:
+  group: ensure-vector-indexes
+  cancel-in-progress: false
+
 jobs:
   ensure-indexes:
     runs-on: ubuntu-latest
@@ -15,83 +19,166 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Ensure indexes exist (no file)
+      - name: Ensure indexes exist and configured
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          set -e
+
           echo "Checking INDEX_COUNT: '$INDEX_COUNT'"
 
           if ! [[ "$INDEX_COUNT" =~ ^[0-9]+$ ]]; then
-            echo "❌ ERROR: INDEX_COUNT is not a valid number. Check your GitHub Variables."
+            echo "❌ ERROR: INDEX_COUNT is not a valid number."
             exit 1
           fi
 
-          # get existing indexes
-          raw_response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes" \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
-  
-          # check API response is success
-          if echo "$raw_response" | jq -e '.success == false' > /dev/null; then
-            echo "❌ Cloudflare API Error:"
-            echo "$raw_response" | jq .
-            exit 1
+          if [ "$INDEX_COUNT" -eq 0 ]; then
+            echo "⚠️ INDEX_COUNT is 0, nothing to do."
+            exit 0
           fi
 
-          existing_indexes=$(echo "$raw_response" | jq -r '.result[]?.name')
+          # --- 强化版 API 调用函数 ---
+          call_api() {
+            local method=$1
+            local url=$2
+            local data=$3
 
+            local max_retries=4
+            local attempt=1
+            local wait=2
+
+            while [ $attempt -le $max_retries ]; do
+              echo "🌐 API Call [$method] $url (attempt $attempt)" >&2
+
+              if [ -z "$data" ]; then
+                response=$(curl -s -w "\n%{http_code}" -X "$method" "$url" \
+                  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+              else
+                response=$(curl -s -w "\n%{http_code}" -X "$method" "$url" \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                  -d "$data")
+              fi
+
+              http_code=$(echo "$response" | tail -n1)
+              body=$(echo "$response" | sed '$d')
+
+              # HTTP 错误处理
+              if [ "$http_code" -ge 500 ] || [ "$http_code" -eq 429 ]; then
+                echo "⚠️ HTTP $http_code, retrying in ${wait}s..." >&2
+              elif [ "$http_code" -ge 400 ]; then
+                echo "❌ HTTP $http_code error: $body" >&2
+                return 1
+              else
+                # JSON 校验
+                if echo "$body" | jq . >/dev/null 2>&1; then
+                  echo "$body"
+                  return 0
+                else
+                  echo "⚠️ Invalid JSON, retrying in ${wait}s..." >&2
+                fi
+              fi
+
+              sleep $wait
+              attempt=$((attempt + 1))
+              wait=$((wait * 2))
+            done
+
+            echo "❌ ERROR: API failed after retries." >&2
+            return 1
+          }
+
+          # 1. 获取现有索引
+          echo "📡 Fetching existing indexes..."
+          raw_response=$(call_api "GET" "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes") || exit 1
+
+          existing_indexes=$(echo "$raw_response" | jq -r '.result[]?.name // empty')
+
+          # 2. 循环处理
           for ((i=0; i<$INDEX_COUNT; i++)); do
             INDEX_NAME="${INDEX_PREFIX}-${i}"
-    
-            if echo "$existing_indexes" | grep -q "^$INDEX_NAME$"; then
+
+            echo "------------------------------------------"
+            echo "🛠️ Processing $INDEX_NAME..."
+
+            # A. 创建 Index
+            if ! echo "$existing_indexes" | grep -Fxq "$INDEX_NAME"; then
+              echo "➕ Creating index $INDEX_NAME..."
+
+              create_data=$(jq -n \
+                --arg name "$INDEX_NAME" \
+                '{
+                  config: { dimensions: 1024, metric: "cosine" },
+                  name: $name,
+                  description: "Auto-created by GitHub Actions"
+                }'
+              )
+
+              res=$(call_api "POST" "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes" "$create_data") || exit 1
+
+              success=$(echo "$res" | jq -r '.success')
+
+              if [ "$success" != "true" ]; then
+                error_code=$(echo "$res" | jq -r '.errors[0].code // empty')
+                error_msg=$(echo "$res" | jq -r '.errors[0].message // empty')
+
+                if [[ "$error_code" == "3002" ]] || [[ "$error_msg" == *"duplicate_name"* ]]; then
+                  echo "✔ Index already exists (race condition handled)"
+                else
+                  echo "❌ Failed to create $INDEX_NAME: $res"
+                  exit 1
+                fi
+              else
+                echo "✅ Created $INDEX_NAME"
+              fi
+
+              # ✅ 关键修复：更新本地缓存
+              existing_indexes="$existing_indexes"$'\n'"$INDEX_NAME"
+
+              sleep 2
+            else
               echo "✔ $INDEX_NAME already exists"
-              continue
             fi
 
-            echo "➕ Creating $INDEX_NAME..."
-    
-            # get whole response of API call
-            response=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes" \
-              -H "Content-Type: application/json" \
-              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              -d "{
-                    \"config\": {
-                      \"dimensions\": 1024,
-                      \"metric\": \"cosine\"
-                    },
-                    \"name\": \"$INDEX_NAME\",
-                    \"description\": \"Auto-created by GitHub Actions\"
-                  }")
+            # B. Metadata Index
+            echo "🔍 Checking metadata index..."
 
-            # check success field of API response
-            is_success=$(echo "$response" | jq -r '.success')
+            meta_list_res=$(call_api "GET" \
+              "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes/$INDEX_NAME/metadata_index/list") || exit 1
 
-            if [ "$is_success" != "true" ]; then
-              echo "❌ Failed to create $INDEX_NAME"
-              echo "Response detail: $response"
-              exit 1
+            is_indexed=$(echo "$meta_list_res" | \
+              jq -r '.result.metadataIndexes // [] | .[] | select(.propertyName == "repoName") | .propertyName')
+
+            if [ -z "$is_indexed" ]; then
+              echo "➕ Creating repoName metadata index..."
+
+              meta_data='{"indexType":"string","propertyName":"repoName"}'
+
+              meta_create_res=$(call_api "POST" \
+                "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes/$INDEX_NAME/metadata_index/create" \
+                "$meta_data") || exit 1
+
+              success=$(echo "$meta_create_res" | jq -r '.success')
+
+              if [ "$success" != "true" ]; then
+                error_code=$(echo "$meta_create_res" | jq -r '.errors[0].code // empty')
+                error_msg=$(echo "$meta_create_res" | jq -r '.errors[0].message // empty')
+
+                if [[ "$error_code" == "40004" ]] || [[ "$error_msg" == *"already exists"* ]]; then
+                  echo "✔ Metadata index already exists"
+                else
+                  echo "❌ Failed metadata index: $meta_create_res"
+                  exit 1
+                fi
+              else
+                echo "✅ Created metadata index"
+              fi
+            else
+              echo "✔ Metadata index already exists"
             fi
 
-            echo "✅ Created $INDEX_NAME"
-
-            # Create repoName metadata index
-            echo "➕ Creating repoName metadata index for $INDEX_NAME..."
-            metadata_response=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes/$INDEX_NAME/metadata_index/create" \
-              -H "Content-Type: application/json" \
-              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              -d '{
-                    "indexType": "string",
-                    "propertyName": "repoName"
-                  }')
-
-            # check success field of metadata API response
-            metadata_success=$(echo "$metadata_response" | jq -r '.success')
-
-            if [ "$metadata_success" != "true" ]; then
-              echo "❌ Failed to create repoName metadata index for $INDEX_NAME"
-              echo "Response detail: $metadata_response"
-              exit 1
-            fi
-
-            echo "✅ Created repoName metadata index for $INDEX_NAME"
+            sleep 2
           done
+
+          echo "🎉 All indexes ensured successfully."

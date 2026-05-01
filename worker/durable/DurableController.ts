@@ -233,7 +233,7 @@ export class MyDurableObject extends DurableObject<Env> {
                         console.log(`Embedding saved to vector index ${indexNumber} (namespace: userId with id: ${titleHash}`);
 
                         // Wait for the index to process the new embedding before querying
-                        await new Promise(resolve => setTimeout(resolve, 300));
+                        // await new Promise(resolve => setTimeout(resolve, 300));
                     }
                 } else {
                     console.warn('AI returned async response or no data, skipping embedding storage');
