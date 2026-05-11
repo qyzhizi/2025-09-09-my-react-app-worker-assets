@@ -16,14 +16,16 @@ import type {
 
 export class SqliteRepository {
     private sql: any;
+    private storage: any;
     private maxArticlesToStore: number;
     // private static readonly MAX_ENTRIES = 30000;
 
     /** All table names that need counter tracking */
     private static readonly COUNTED_TABLES = ['articleContent'] as const;
 
-    constructor(sql: any, maxArticlesToStore: number = 1000) {
-        this.sql = sql;
+    constructor(storage: any, maxArticlesToStore: number = 1000) {
+        this.sql = storage.sql;
+        this.storage = storage
         this.maxArticlesToStore = maxArticlesToStore;
     }
 
@@ -281,57 +283,38 @@ export class SqliteRepository {
     async batchInsertArticleContent(
         paramsList: InsertArticleContentParams[]
     ): Promise<InsertResult[]> {
-        if (paramsList.length === 0) {
-            console.log(`batchInsertArticleContent, No valid params to insert`);
-            return [];
-        }
-
-        // Pre-validate all params and generate ids
-        // Assign sequential createdAt timestamps so each record has a distinct creation time
-        const prepared: Array<{ id: string; title: string; content: string; createdAt: string }> = [];
-        for (let idx = 0; idx < paramsList.length; idx++) {
-            const { id, title, date: createdAt, content } = paramsList[idx];
-            if (title === undefined || title === null) {
-                throw new Error(`Invalid title: ${title}`);
+        if (paramsList.length === 0) return [];
+    
+        // 1. 数据预处理
+        const prepared = paramsList.map(p => ({
+            id: p.id,
+            title: p.title,
+            content: p.content,
+            createdAt: p.date
+        }));
+    
+        // 2. 使用 Cloudflare 要求的事务 API [cite: 79]
+        // transactionSync 会自动处理 BEGIN 和 COMMIT，并保证原子性 [cite: 79]
+        this.storage.transactionSync(() => {
+            // 3. 循环执行 exec
+            for (const item of prepared) {
+                // Although it is executed in a loop, within transactionSync, SQLite will merge it into a single disk write, resulting in extremely high performance
+                this.sql.exec(
+                    `INSERT INTO articleContent (id, title, content, createdAt) VALUES (?, ?, ?, ?)`,
+                    item.id, 
+                    item.title, 
+                    item.content, 
+                    item.createdAt
+                );
             }
-            if (content === undefined || content === null) {
-                throw new Error(`Invalid content: ${content}`);
-            }
-            if (createdAt === undefined || createdAt === null) {
-                throw new Error(`Invalid content: ${createdAt}`);
-            }
-            // Each record gets baseTime + idx milliseconds, formatted as ISO 8601 string
-            prepared.push({ id, title, content, createdAt });
-        }
+        });
 
-        // SQLite has a default SQLITE_MAX_VARIABLE_NUMBER limit (typically 999).
-        // Each row uses 4 placeholders, so process in chunks of 200 rows.
-        const CHUNK_SIZE = 200;
-
-        for (let i = 0; i < prepared.length; i += CHUNK_SIZE) {
-            const chunk = prepared.slice(i, i + CHUNK_SIZE);
-            const placeholders = chunk.map(() => '(?, ?, ?, ?)').join(', ');
-            const bindValues = chunk.flatMap(({ id, title, content, createdAt }) => [id, title, content, createdAt]);
-
-            this.sql.exec(
-                `INSERT INTO articleContent (id, title, content, createdAt) VALUES ${placeholders}`,
-                ...bindValues
-            );
-        }
-
-        console.log(`Batch inserted ${prepared.length} article(s): ${prepared.map(p => `id=${p.id}, title="${p.title}", len=${p.content.length}, createdAt=${p.createdAt}`).join('; ')}`);
-
-        // Update count table once for all inserts
-        try {
-            this.incrementTableCount('articleContent', prepared.length);
-        } catch (error) {
-            console.error(`Failed to update count table:`, error);
-            throw error;
-        }
-
-        // Check whether the storage limit is exceeded (once after all inserts)
+        console.log(`Batch inserted ${prepared.length} article(s)`)
+    
+        // 5. 后续逻辑：更新计数等
+        this.incrementTableCount('articleContent', prepared.length);
         await this.enforceArticleCountLimit();
-
+    
         return prepared.map(({ id }) => ({ id }));
     }
 
@@ -433,7 +416,7 @@ export class SqliteRepository {
             LIMIT ? OFFSET ?
         `, pageSize, (page - 1) * pageSize);
         const resultArray = this.convertCursorToArray(result);
-        console.log("getArticleContentList called with:", { page, pageSize });
+        console.log("getArticleContentList called with:", { page, pageSize }, "resultArray length: ", resultArray.length);
         return resultArray;
 
     }

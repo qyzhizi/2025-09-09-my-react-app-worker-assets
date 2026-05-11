@@ -22,7 +22,6 @@ const INDEX_NAME_PREFIX = 'MEMOFLOW_INDEX_'
 export class MyDurableObject extends DurableObject<Env> {
     private state: DurableObjectState;
     env: Env;
-    private sql: any;
     private sqliteRepository: SqliteRepository;
     /**
      * GitHub push serialization lock.
@@ -41,8 +40,7 @@ export class MyDurableObject extends DurableObject<Env> {
         super(ctx, env);
         this.state = ctx;
         this.env = env;
-        this.sql = ctx.storage.sql;
-        this.sqliteRepository = new SqliteRepository(this.sql, MAX_ARTICLES_TO_STORE);
+        this.sqliteRepository = new SqliteRepository(ctx.storage,MAX_ARTICLES_TO_STORE);
         this.sqliteRepository.initializeTables();
     }
 
@@ -603,10 +601,8 @@ export class MyDurableObject extends DurableObject<Env> {
                 return filePath;
             })
             .filter((filePath): filePath is string => Boolean(filePath))));
-        console.log("selectedMarkdownFileList", selectedMarkdownFileList.slice(0,10))
         
         const FileContents = await batchGetFileContents(githubUserName, githubRepoName, selectedMarkdownFileList, branch,  accessToken);
-        console.log("FileContents: ", FileContents.slice(0, 10));
         const articleParamsList = FileContents.map((fileContent) => {
             const { title, date } = getMetaDataFromContent(fileContent.content);
             const articleId = edgeHash64(title || fileContent.path);
