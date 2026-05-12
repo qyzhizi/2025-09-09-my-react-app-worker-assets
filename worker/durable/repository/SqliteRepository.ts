@@ -171,6 +171,7 @@ export class SqliteRepository {
         params: InsertArticleContentParams
     ): Promise<InsertResult> {
         const { id, title, date, content } = params;
+        console.log("inserArticleContent params: ", params)
         
         // param validation
         if (title === undefined || title === null) {
@@ -290,7 +291,7 @@ export class SqliteRepository {
             id: p.id,
             title: p.title,
             content: p.content,
-            createdAt: p.date
+            createdAt: p.date || new Date().toISOString()
         }));
     
         // 2. 使用 Cloudflare 要求的事务 API [cite: 79]

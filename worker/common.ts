@@ -69,7 +69,7 @@ export function getMetaDataFromContent(content: string): { title: string; date: 
       title = frontmatterTitleMatch[1].trim();
     }
     if (frontmatterDateMatch && frontmatterDateMatch[1]) {
-      date = frontmatterDateMatch[1].trim();
+      date = normalizeDate(frontmatterDateMatch[1].trim());
     }
   }
 
@@ -98,4 +98,87 @@ export function normalizeGitHubPath(path: string): string {
         .replace(/\\/g, '/')        // Replace backslashes with forward slashes
         .replace(/\/+/g, '/')       // Merge multiple slashes
         .replace(/^\/|\/$/g, '');   // Remove leading and trailing slashes
+}
+
+export function normalizeDate(dateStr: string) {
+  // ISO 直接返回
+  if (/^\d{4}-\d{2}-\d{2}T/.test(dateStr)) {
+      return new Date(dateStr).toISOString();
+  }
+
+  // yyyy/m/d hh:mm:ss
+  let m = dateStr.match(
+      /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})$/
+  );
+
+  if (m) {
+      const [, y, mon, d, h, min, s] = m;
+
+      return new Date(Date.UTC(
+          Number(y),
+          Number(mon) - 1,
+          Number(d),
+          Number(h),
+          Number(min),
+          Number(s)
+      )).toISOString();
+  }
+
+  // m/d/yyyy hh:mm:ss AM/PM
+  m = dateStr.match(
+      /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(AM|PM)$/i
+  );
+
+  if (m) {
+      let [, mon, d, y, h, min, s, ap] = m;
+
+      let hour = Number(h);
+
+      if (ap.toUpperCase() === 'PM' && hour !== 12) {
+          hour += 12;
+      }
+
+      if (ap.toUpperCase() === 'AM' && hour === 12) {
+          hour = 0;
+      }
+
+      return new Date(Date.UTC(
+          Number(y),
+          Number(mon) - 1,
+          Number(d),
+          hour,
+          Number(min),
+          Number(s)
+      )).toISOString();
+  }
+
+  // 中文格式：2023年4月17日 上午2:37:45
+  m = dateStr.match(
+      /^(\d{4})年(\d{1,2})月(\d{1,2})日\s+(上午|下午)(\d{1,2}):(\d{2}):(\d{2})$/
+  );
+
+  if (m) {
+      let [, y, mon, d, period, h, min, s] = m;
+
+      let hour = Number(h);
+
+      if (period === '下午' && hour !== 12) {
+          hour += 12;
+      }
+
+      if (period === '上午' && hour === 12) {
+          hour = 0;
+      }
+
+      return new Date(Date.UTC(
+          Number(y),
+          Number(mon) - 1,
+          Number(d),
+          hour,
+          Number(min),
+          Number(s)
+      )).toISOString();
+  }
+
+  throw new Error(`Unsupported date format: ${dateStr}`);
 }
