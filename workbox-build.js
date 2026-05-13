@@ -11,46 +11,74 @@ generateSW({
   skipWaiting: true,
 
   runtimeCaching: [
-    // ❌ API：完全不缓存
-    // {
-    //   urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
-    //   handler: 'NetworkOnly'
-    // },    
+    // ✅ OAuth / 登录完全绕过 SW
+    {
+      urlPattern: ({ url }) =>
+        url.pathname.startsWith('/auth/') ||
+        url.pathname.startsWith('/oauth/') ||
+        url.pathname.startsWith('/login'),
+  
+      handler: 'NetworkOnly'
+    },
+  
+    // ✅ API 不缓存（推荐）
+    {
+      urlPattern: ({ url }) =>
+        url.pathname.startsWith('/api'),
+  
+      handler: 'NetworkOnly'
+    },
+  
+    // 静态资源缓存
     {
       urlPattern: ({ request }) =>
-        ['script', 'style', 'image', 'font'].includes(request.destination),
+        ['script', 'style', 'image', 'font'].includes(
+          request.destination
+        ),
+  
       handler: 'CacheFirst',
+  
       options: {
         cacheName: 'static-assets-cache',
+  
         expiration: {
           maxEntries: 200,
           maxAgeSeconds: 60 * 60 * 24 * 30
         }
       }
     },
+  
+    // 普通页面导航
     {
-      urlPattern: ({ url }) => url.pathname.startsWith('/api'),
-      handler: 'NetworkFirst',
-      options: {
-        cacheName: 'api-cache',
-        networkTimeoutSeconds: 3,
-        expiration: {
-          maxEntries: 100,
-          maxAgeSeconds: 60 * 5
+      urlPattern: ({ request, url }) => {
+        if (request.mode !== 'navigate') return false;
+  
+        // ❌ 不处理登录相关
+        if (
+          url.pathname.startsWith('/auth/') ||
+          url.pathname.startsWith('/oauth/') ||
+          url.pathname.startsWith('/login')
+        ) {
+          return false;
         }
-      }
-    },
-    {
-      urlPattern: ({ request }) => request.mode === 'navigate',
+  
+        return true;
+      },
+  
       handler: 'NetworkFirst',
+  
       options: {
         cacheName: 'html-cache',
         networkTimeoutSeconds: 3
       }
     },
+  
+    // 其它资源
     {
       urlPattern: () => true,
+  
       handler: 'StaleWhileRevalidate',
+  
       options: {
         cacheName: 'misc-cache'
       }
