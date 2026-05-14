@@ -78,12 +78,7 @@ export default function MainSettingPage() {
         successMessage={successMessage}
         errorMessage={errorMessage}
         setSuccessMessage={setSuccessMessage}
-        setErrorMessage={setErrorMessage}
       />
-      // case 'github':
-      //   return <GithubSettings successMessage={successMessage} errorMessage={errorMessage} />;
-      // case 'jianguoyun':
-      //   return <JianGuoYunSettings />;
       default:
         return <AccountSettings />;
     }
