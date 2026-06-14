@@ -10,12 +10,13 @@ import { getUserSettingsFromDb, updateUserSettingsToDb } from "@/infrastructure/
 import { safeUpdategithubRepoAccessByUserId,
   getgithubRepoAccessInfo, 
 } from "@/infrastructure/githubRepoAccess"
-import { validateGitRepoFullName } from "@/common"
+import { validateGitRepoFullName } from "@/utils/tools"
 import { ValidationError, NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
-import {testGitHubRepoAcess} from "@/providers"
 import {type GithubRepoAccess} from "@/infrastructure/types";
 import { PER_PAGE } from "@/ConstVar";
+import { DURABLE_NAME_PREFIX } from "@/ConstVar";
+import { edgeHash64} from "@/utils/titleHash";
 
 const DEFAULT_SEARCH_COMMITS_THRESHOLD = 100;
 
@@ -48,8 +49,8 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     const [githubUserName, githubRepoName] = githubRepoFullName.split("/");
 
     // get settings @todo validate user settings
-    const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
-    console.log("userSettings: ", userSettings)
+    // const userSettings = await getUserSettingsFromDb(c, c.get("userId")) as Record<string, string | null>;
+    // console.log("userSettings: ", userSettings)
 
     let githubAccessInfo;
     try {
@@ -73,16 +74,16 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
       throw new NotGetAccessTokenError(" Input is inconsistent with DB  , Please login GitHub first, then try again!")
     }
     if (!dbBranch) {
-      console.warn("Branch info is not in DB, will use default branch when init vault")
+      // console.warn("Branch info is not in DB, will use default branch when init vault")
       // get default branch from GitHub API
       dbBranch = await getDefaultBranchFromGitHubAPI(githubUserName, githubRepoName, accessToken)
-      console.log("Default branch from GitHub API: ", dbBranch)
+      // console.log("Default branch from GitHub API: ", dbBranch)
       // save branch info to DB
       await safeUpdategithubRepoAccessByUserId(c, { branch: dbBranch });
     }
     let durableIsReset = false
     if (normalizedVaultPathInRepo !== dbVaultPathInRepo || githubRepoName !== dbGithubRepoName) {
-      console.warn("vaultPathInRepo or githubRepoName is different from DB!")
+      // console.warn("vaultPathInRepo or githubRepoName is different from DB!")
       // reset durable object storage and sqlite to avoid potential issue caused by inconsistent repoName or vaultPathInRepo
       await duableSwitchAndInitVault(
         c,
@@ -100,13 +101,13 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
 
     try{
       await safeUpdategithubRepoAccessByUserId(c, { githubRepoName, vaultPathInRepo: normalizedVaultPathInRepo });
-      await testGitHubRepoAcess(accessToken, githubUserName, githubRepoName);
+      // await testGitHubRepoAcess(accessToken, githubUserName, githubRepoName);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return c.json({"success": "false", "error": errorMessage}, 400)
     }
     if (durableIsReset) {
-      console.log("Durable Object storage and sqlite reset done.")
+      // console.log("Durable Object storage and sqlite reset done.")
       return c.json({"success": `${githubUserName}/${githubRepoName} saved, durable object reset done, connecting success!`})
     }
     
@@ -211,4 +212,59 @@ export async function searchCommitsHandler(c:Context<{ Bindings: Env, Variables:
     perPage: PER_PAGE,
   })
   return c.json({ commits });
+}
+
+export async function checkIfTitlesExistsOnGitHubVaultHandler(c:Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  const {titles} = await c.req.json();
+  if (!titles || !Array.isArray(titles)) {
+    return c.json({ error: "titles query parameter is required and must be an array" }, 400);
+  }
+  let githubAccessInfo: GithubRepoAccess | null;
+  try {
+    githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
+  } catch (TokenExpiredError) {
+    return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401);
+  }
+  if (!githubAccessInfo || !githubAccessInfo.accessToken){
+    throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!");
+  }
+  if (!githubAccessInfo.githubRepoName){
+    return c.json({ error: "githubRepoName is not exist" }, 400);
+  }
+  if (!githubAccessInfo.accessToken || !githubAccessInfo.githubUserName || !githubAccessInfo.githubRepoName) {
+    return c.json({ error: "Incomplete GitHub access record" }, 400);
+  }
+  let dbBranch = githubAccessInfo.branch
+  if (!dbBranch) {
+    // console.warn("Branch info is not in DB, will use default branch when init vault")
+    // get default branch from GitHub API
+    dbBranch = await getDefaultBranchFromGitHubAPI(githubAccessInfo.githubUserName, githubAccessInfo.githubRepoName, githubAccessInfo.accessToken)
+    // console.log("Default branch from GitHub API: ", dbBranch)
+    // save branch info to DB
+    await safeUpdategithubRepoAccessByUserId(c, { branch: dbBranch });
+  }   
+  const filePaths: string[] = [];
+  for (const title of titles) {
+    if (typeof title !== "string" || title.trim() === "") {
+      return c.json({ error: "Each title must be a non-empty string" }, 400);
+    }
+    const titleHash = edgeHash64(title);
+    const filePath = `${githubAccessInfo.vaultPathInRepo}/${githubAccessInfo.vaultName}/${titleHash.slice(0,2)}/${titleHash.slice(2,4)}/${titleHash.slice(4)}.md`;
+    filePaths.push(filePath);
+  }
+  
+  const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+      `${DURABLE_NAME_PREFIX}${c.get("userId")}`
+    );
+  const stub = c.env.MY_DURABLE_OBJECT.get(doId);
+  const exists = await (stub as any).checkIfFilesExistOnGitHub(
+    {
+      accessToken: githubAccessInfo.accessToken,
+      githubUserName: githubAccessInfo.githubUserName,
+      repoName: githubAccessInfo.githubRepoName,
+      dbBranch: dbBranch,
+      filePaths: filePaths
+    }
+  );
+  return c.json({ exists });
 }

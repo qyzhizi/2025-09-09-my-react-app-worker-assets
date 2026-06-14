@@ -728,7 +728,7 @@ export class SqliteRepository {
     resetTables(): any {
         try {
             const result: any = {
-                section: "Reset All Tables",
+                section: "Reset some Tables",
                 success: true,
                 data: {}
             };
@@ -743,7 +743,7 @@ export class SqliteRepository {
             // reset titleIndexCache 
             // this.sql.exec(`DELETE FROM titleIndexCache`);
 
-            this.deleteAllKv();
+            // this.deleteAllKv();
 
             result.data.deletedTables = [ 'articleContent'];
             result.data.preservedStructures = [
@@ -757,7 +757,7 @@ export class SqliteRepository {
 
         } catch (error) {
             return {
-                section: "Reset All Tables",
+                section: "Reset some Tables",
                 success: false,
                 error: error instanceof Error ? error.message : String(error)
             };

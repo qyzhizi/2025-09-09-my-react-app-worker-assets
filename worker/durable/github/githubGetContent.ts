@@ -1,4 +1,4 @@
-import {normalizeGitHubPath} from "../../common";
+import {normalizeGitHubPath} from "../../utils/tools";
 
 const GITHUB_GRAPHQL = "https://api.github.com/graphql";
 const GITHUB_RAW_REST = "https://raw.githubusercontent.com";
@@ -62,6 +62,94 @@ export async function batchGetFileContents(
   );
 
   return results;
+}
+
+/**
+ * Check whether all given files exist in the repository.
+ * Returns `true` when all files exist; otherwise returns an array of missing file paths.
+ */
+export async function checkFilesExistInRepo(
+  {owner, repo, filePaths, branch, token}: {
+    owner: string;
+    repo: string;
+    filePaths: string[];
+    branch: string;
+    token: string;
+  }
+): Promise<true | string[]> {
+  if (!filePaths.length) return true;
+
+  // Attempt a single GraphQL query to check existence of all files at once.
+  try {
+    const ref = branch ?? "HEAD";
+    const fileQueries = filePaths.map((filePath, index) => {
+      const expression = `${ref}:${normalizeGitHubPath(filePath)}`;
+      return `file${index}: object(expression: ${JSON.stringify(expression)}) { ... on Blob { byteSize } }`;
+    });
+
+    const query = `
+      query {
+        repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repo)}) {
+          ${fileQueries.join("\n")}
+        }
+      }
+    `;
+
+    const res = await fetch(GITHUB_GRAPHQL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "User-Agent": "memoflow-worker",
+      },
+      body: JSON.stringify({ query }),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.warn(`GraphQL existence check failed with status ${res.status}, falling back to REST. Error: ${errorText}`);
+      // fallthrough to REST fallback below
+    } else {
+      const json = await res.json() as any;
+      const repoObj = json?.data?.repository;
+      if (repoObj) {
+        const missing: string[] = [];
+        for (let i = 0; i < filePaths.length; i++) {
+          const file = repoObj[`file${i}`];
+          if (!file || file.byteSize == null) {
+            missing.push(filePaths[i]);
+          }
+        }
+        return missing.length ? missing : true;
+      }
+      console.warn("GraphQL response missing repository field, falling back to REST HEAD checks.");
+    }
+  } catch (e) {
+    console.error("GraphQL existence check error:", e);
+    // fall through to REST fallback
+  }
+
+  // Fallback: use REST HEAD checks sequentially (no runWithConcurrency here to avoid concurrency change in this function)
+  const missing: string[] = [];
+  // console.log("Fallback: use REST HEAD checks sequentially ")
+  for (const path of filePaths) {
+    const url = `${GITHUB_RAW_REST}/${owner}/${repo}/${branch}/${normalizeGitHubPath(path)}`;
+    try {
+      const r = await fetch(url, {
+        method: "HEAD",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "User-Agent": "memoflow-worker",
+        },
+      });
+      if (!r.ok) missing.push(path);
+    } catch (e) {
+      console.error(`Error checking existence of file "${path}" via REST fallback:`, e);
+      missing.push(path);
+    }
+  }
+
+  return missing.length ? missing : true;
 }
 
 async function fetchByGraphQLChunk(

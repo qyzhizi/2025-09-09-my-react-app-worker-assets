@@ -4,6 +4,8 @@ import { sign } from "hono/jwt";
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { getInstallationRepositories } from '@/durable/github/githubApp'
+import { DURABLE_NAME_PREFIX } from "@/ConstVar";
+import { respondError } from "@/types/error"
 
 import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService'
 import {durableHello,
@@ -16,7 +18,8 @@ import {durableHello,
 } from "@/durable/callDurable"
 import { findManyUsers, getUserAvatarUrl, createOrUpdateUser } from "@/infrastructure/user";
 import { getUserById } from "@/infrastructure/user";
-import { getUserSettingsFromDb, updateUserSettingsToDb } from "@/infrastructure/userSettings";
+import { getUserSettingsFromDb,
+  updateUserSettingsToDb } from "@/infrastructure/userSettings";
 import { addOrUpdategithubRepoAccessData } from "@/infrastructure/githubRepoAccess";
 import {getVaultInfo} from '@/infrastructure/githubRepoAccess'
 import { safeUpdategithubRepoAccessByUserId,
@@ -24,11 +27,12 @@ import { safeUpdategithubRepoAccessByUserId,
 } from "@/infrastructure/githubRepoAccess"
 import type { PushGitRepoTaskParams } from "@/types/durable";
 import { Provider } from "@/types/provider";
-import { getMetaDataFromContent } from "@/common"
+import { getMetaDataFromContent } from "@/utils/tools"
 import { NotGetAccessTokenError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
 import {type GithubRepoAccess} from "@/infrastructure/types";
-import { edgeHash64 } from "@/durable/titleHash"
+import { edgeHash64 } from "@/utils/titleHash"
+import { isVectorIndexProvider } from "@/types/durable";
 
 const VALIDATION_TARGET = {
   QUERY: "query",
@@ -56,14 +60,20 @@ export const GithubLoginHandler = async (c: Context) => {
 			return c.text("Required information could not be retrieved", 400);
 		}
 
-		const user = await createOrUpdateUser(
-			c,
-			userData.login,
-			userData.email,
-			userData.avatar_url ?? "",
-			Provider.GitHub,
-			userData.id.toString(),
-		);
+    let user;
+    try {
+      user = await createOrUpdateUser(
+        c,
+        edgeHash64(userData.id.toString()), // userId
+        userData.login,
+        userData.email,
+        userData.avatar_url ?? "",
+        Provider.GitHub,
+        userData.id.toString(),
+      );
+    } catch (err: any) {
+      return respondError(c, err);
+    }
 
 		const accessTokenPayload = {
 			sub: user.id.toString(),
@@ -236,7 +246,7 @@ export async function setGithubRepoHandler(c: Context<{ Bindings: Env }>): Promi
 }
 
 export const durableHelloHandler = async (c: Context) => {
-  return durableHello(c);
+  return c.json(await durableHello(c));
 };
 
 export const getUsersHandler = async (c: Context) => {
@@ -386,8 +396,6 @@ export async function getVaultInfoHandler(c: Context<{ Bindings: Env, Variables:
   return c.json({vaultName})
 }
 
-
-
 export async function getGitHubRepoInfoHandler(c:Context<{Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
   const githubAccessInfo = await getgithubRepoAccessInfo(c);
   const githubRepoName = githubAccessInfo?.githubRepoName ?? null
@@ -467,7 +475,7 @@ export async function durableSearchSimilarTitlesInVectorIndexHandler(c: Context<
     try {
         // Validate and extract request body
         const body = await c.req.json()
-        const { query, topK } = body
+        const { query, topK, currentRepoSearch = false } = body
 
         // Validate query parameter
         if (!query || typeof query !== 'string' || query.trim() === '') {
@@ -491,9 +499,10 @@ export async function durableSearchSimilarTitlesInVectorIndexHandler(c: Context<
         }
 
         // Search for similar titles in vector index
-        const repoNameForSearch = githubAccessInfo?.githubRepoName ?? ''
+        const repoName = githubAccessInfo?.githubRepoName ?? ''
+        const vaultPathInRepo = githubAccessInfo?.vaultPathInRepo ?? ''
         const similarTitles = await durableSearchSimilarTitlesInVectorIndex(
-          c, { query, topK, repoName: repoNameForSearch})
+          c, { query, topK, repoAndVaultPath: currentRepoSearch ? `${repoName}-${vaultPathInRepo}` : undefined })
         console.log('similarTitles from durableSearchSimilarTitlesInVectorIndex:', similarTitles)
         
         // Validate similarTitles response
@@ -503,8 +512,8 @@ export async function durableSearchSimilarTitlesInVectorIndexHandler(c: Context<
         }
 
 
-        // Construct response with search results and GitHub info
-        const response = {
+        // Construct result with search results and GitHub info
+        const result = {
             similarTitles,
             githubUserName: githubAccessInfo?.githubUserName ?? null,
             githubRepoName: githubAccessInfo?.githubRepoName ?? null,
@@ -512,10 +521,57 @@ export async function durableSearchSimilarTitlesInVectorIndexHandler(c: Context<
             vaultName: githubAccessInfo?.vaultName ?? null,
         }
 
-        return c.json(response, 200)
+        return c.json(result, 200)
     } catch (err) {
         console.error('Error in durableSearchSimilarTitlesInVectorIndexHandler:', err)
         const errorMessage = err instanceof Error ? err.message : 'Internal Server Error'
         return c.json({ error: errorMessage }, 500)
     }
+}
+
+export async function setVectorIndexProviderHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  try {
+    const body = await c.req.json()
+    const { vectorIndexProvider } = body
+    // Validate vectorIndexProvider is vectorIndexProvider
+    console.log('Received vectorIndexProvider:', vectorIndexProvider)
+    if ( !isVectorIndexProvider(vectorIndexProvider) ) {
+      return c.json({ error: 'Invalid vectorIndexProvider' }, 400)
+    }
+    // save to userSettings
+    await updateUserSettingsToDb(c, c.get("userId"), { vectorIndexProvider })
+    
+    // save to durable object for quick access in durable functions
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+      `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
+    const stub = c.env.MY_DURABLE_OBJECT.get(doId)
+    await stub.setVectorIndexProviderToKvMeta(vectorIndexProvider)
+
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('setVectorIndexProviderHandler error:', error)
+    return c.json({ error: 'Internal Server Error' }, 500)
+  }
+}
+
+export async function getVectorIndexProviderHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  try {
+    // get from durable object for quick access in durable functions
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+      `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
+    // avoid deep/recursive TS type instantiation from remote DO stub by narrowing stub type
+    const stub = c.env.MY_DURABLE_OBJECT.get(doId) as unknown as {
+      getVectorIndexProviderFromKvMeta: () => Promise< any>
+    }
+    const vectorIndexProvider = await stub.getVectorIndexProviderFromKvMeta()
+
+    if (!vectorIndexProvider) {
+      return c.json({ vectorIndexProvider: null }, 200)
+    }
+
+    return c.json( vectorIndexProvider, 200)
+  } catch (error) {
+    console.error('getVectorIndexProviderHandler error:', error)
+    return c.json({ error: 'Internal Server Error' }, 500)
+  }
 }

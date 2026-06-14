@@ -27,3 +27,12 @@ export interface PushGitRepoTaskRespon {
     taskId: string;
     completed: boolean;
 }
+
+export const VECTORINDEXTYPE = {
+    QDRANT: 'qdrant',
+    CLOUDFLARE: 'cloudflare',
+}
+
+export const isVectorIndexProvider = (value: any): value is string => {
+    return Object.values(VECTORINDEXTYPE).includes(value);
+}

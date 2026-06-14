@@ -2,19 +2,37 @@ import { useState, useEffect } from 'react';
 import {apiFetch} from "@/common";
 
 
-function VaultInfoCard({ vaultInfo }: 
-  { vaultInfo: { vaultName?: string } }) {
+function VaultInfoCard({
+  vaultInfo,
+  githubRepoFullName,
+  vaultPathInRepo,
+}: {
+  vaultInfo: { vaultName?: string };
+  githubRepoFullName?: string;
+  vaultPathInRepo?: string;
+}) {
   if (!vaultInfo) {
     return null;
   }
 
+  const ownerRepo = githubRepoFullName || '';
+  const path = (vaultPathInRepo || '').replace(/^\/+|\/+$/g, '');
+  const name = vaultInfo.vaultName || '';
+  const parts: string[] = [];
+  if (ownerRepo) parts.push(ownerRepo);
+  if (path) parts.push(path);
+  if (name) parts.push(name);
+  const fullPath = parts.length ? parts.join('/') : 'No vault configured';
+
   return (
     <div className="mb-2 p-2 bg-gray-50 dark:bg-gray-700 rounded-md">
       <div>
-        <p className="text-sm text-gray-500 dark:text-gray-400">Vault Name</p>
+        {/* <p className="text-sm text-gray-500 dark:text-gray-400">Vault Name</p>
         <p className="text-lg font-semibold text-gray-900 dark:text-white">
-          {vaultInfo.vaultName || 'No vault configured'}
-        </p>
+          {name || 'No vault configured'}
+        </p> */}
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Full Path</p>
+        <p className="text-lg text-gray-700 dark:text-gray-200 break-all">{fullPath}</p>
       </div>
     </div>
   );
@@ -123,10 +141,6 @@ export default function GithubSettings({
 
   };
 
-  const handlePullFromGithub = () => {
-    console.log('Pulling sync vaults to database...');
-    alert('Pulling sync vaults to database...');
-  };
 
   return (
     <div className="bg-transparent transition-colors duration-300">
@@ -142,7 +156,11 @@ export default function GithubSettings({
           <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
             Vault Info
           </div>
-          <VaultInfoCard vaultInfo={vaultInfo} />
+          <VaultInfoCard
+            vaultInfo={vaultInfo}
+            githubRepoFullName={githubRepoFullName}
+            vaultPathInRepo={vaultPathInRepo}
+          />
         </div>
         <hr className="border-t border-gray-500 dark:border-gray-500 my-4" />
 
@@ -258,20 +276,6 @@ export default function GithubSettings({
           Save Repo and Test Connection
         </button>
 
-        <hr className="border-t border-gray-500 dark:border-gray-500 my-6" />
-        {/* Action Section */}
-        <div>
-          <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-4">
-            Action
-          </div>
-          
-          <button
-            onClick={handlePullFromGithub}
-            className="w-full bg-green-500 dark:bg-green-600 hover:bg-green-600 dark:hover:bg-green-700 text-white font-medium py-3 px-6 rounded-md text-sm transition-colors duration-200 shadow-sm"
-          >
-            Pull remote vault to database
-          </button>
-        </div>
       </div>
     </div>
   );

@@ -3,6 +3,8 @@
 const SHARED_ENCODER = new TextEncoder();
 const SCRATCH_BUFFER = new Uint8Array(1024);
 
+const UUID_PADDING = "0000000000000000";
+
 export function edgeHash64(str: string, seed: bigint = BigInt(0)): string {
 
   // 1. 直接编码到预分配的缓冲区中
@@ -77,4 +79,31 @@ export function mapUuidQuick(uuid: string, a: number) {
   // 取前 8 位直接转 16 进制整数，不需要 BigInt
   const part = parseInt(uuid.substring(0, 8), 16);
   return part % a;
+}
+
+/**
+ * 16位 hex -> 紧凑 UUID (32位，不带连字符)
+ */
+export function hex16ToUuid(hex16: string): string {
+  if (!/^[0-9a-fA-F]{16}$/.test(hex16)) {
+    throw new Error("必须是16位十六进制字符串");
+  }
+
+  return hex16.toLowerCase() + UUID_PADDING;
+}
+
+/**
+ * 紧凑 UUID -> 原始16位 hex
+ */
+export function uuidToHex16(uuid: string): string {
+  // 去掉可能存在的连字符，兼容两种 UUID 格式
+  const compact = uuid.replace(/-/g, "").toLowerCase();
+
+  if (!/^[0-9a-f]{32}$/.test(compact)) {
+    // throw new Error("非法 UUID");
+    console.warn("警告: 非法 UUID 格式，返回原字符串:", uuid);
+    return uuid; // 如果不是合法 UUID，直接返回原字符串（兼容老数据）
+  }
+
+  return compact.slice(0, 16);
 }

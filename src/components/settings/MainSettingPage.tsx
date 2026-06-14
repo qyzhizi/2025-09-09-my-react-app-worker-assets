@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 
 import AccountSettings from './Account';
 import StorageSettings from './Storage';
+import VectorIndexSettings from './VectorIndex';
 import styles from './MainSettingPage.module.css';  // Import CSS module
 
 // Navigation item configuration
@@ -22,21 +23,30 @@ const navItems = [
       <svg xmlns="http://www.w3.org/2000/svg" height="20" width="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><path d="M3 9h18M3 15h18"></path></svg>
     )
   },
-  // {
-  //   id: 'jianguoyun',
-  //   label: 'JianGuoYun',
-  //   icon: (
-  //     <svg fill="currentColor" height="20" width="20" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  //       <path d="M394.86,136.98c-39.168-36.505-90.246-56.611-143.812-56.611c-56.993,0-108.743,22.754-146.744,59.608 C93.39,126.618,60,77.501,98.835,15.37c2.938-4.704,1.511-10.899-3.198-13.843c-4.694-2.938-10.899-1.511-13.843,3.198 C34.512,80.378,78.6,140.691,90.492,154.708c-31.396,36.841-50.407,84.542-50.407,136.625c0,53.575,20.107,105.046,56.611,144.204 c1.859,1.996,4.449,3.595,7.172,3.595c0.059,0,0.118,0,0.177,0c2.663,0,5.219-1.452,7.103-3.341L395.115,151.63 c1.928-1.928,2.987-4.751,2.943-7.478C398.009,141.424,396.857,138.839,394.86,136.98z M104.495,413.63 c-28.651-34.278-44.319-77.311-44.319-122.297c0-105.247,85.626-190.872,190.872-190.872c44.976,0,88.014,15.667,122.302,44.319 L104.495,413.63z"></path>
-  //       <path d="M470.097,338.35c-7-51.809-33.65-103.137-75.045-144.528c-3.924-3.924-10.281-3.924-14.206,0L153.533,421.13 c-1.884,1.884-2.943,4.439-2.943,7.103c0,2.663,1.06,5.219,2.943,7.103C203.831,485.634,267.099,512,324.308,512 c40.812,0,78.543-13.421,106.262-41.145C463.2,438.23,477.239,391.169,470.097,338.35z M423.119,449.197l-14.279-14.278 c-3.924-3.924-10.281-3.924-14.205,0c-3.924,3.924-3.924,10.281,0,14.205l14.276,14.276 c-58.436,48.948-159.361,33.934-233.938-35.299l212.843-212.838c34.317,36.932,56.356,81.25,62.37,125.775 C455.933,383.565,446.319,421.528,423.119,449.197z"></path>
-  //     </svg>
-  //   )
-  // }
+  {
+    id: 'vectorIndex',
+    label: 'VectorIndex',
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" height="20" width="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="5" cy="5" r="1.5"/>
+        <circle cx="19" cy="5" r="1.5"/>
+        <circle cx="12" cy="12" r="1.5"/>
+        <circle cx="5" cy="19" r="1.5"/>
+        <circle cx="19" cy="19" r="1.5"/>
+        <line x1="6.5" y1="5" x2="10.5" y2="11"/>
+        <line x1="17.5" y1="5" x2="13.5" y2="11"/>
+        <line x1="10.5" y1="13" x2="6.5" y2="19"/>
+        <line x1="13.5" y1="13" x2="17.5" y2="19"/>
+      </svg>
+    )
+
+  }
+
 ];
 
 // main component
 export default function MainSettingPage() {
-  const [activeTab, setActiveTab] = useState('account');
+  const [activeTab, setActiveTab] = useState('storage');
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -74,13 +84,19 @@ export default function MainSettingPage() {
       case 'account':
         return <AccountSettings />;
       case 'storage':
-        return <StorageSettings 
-        successMessage={successMessage}
-        errorMessage={errorMessage}
-        setSuccessMessage={setSuccessMessage}
-      />
+        return <StorageSettings
+          successMessage={successMessage}
+          errorMessage={errorMessage}
+          setSuccessMessage={setSuccessMessage}
+        />
+      case 'vectorIndex':
+        return <VectorIndexSettings />;
       default:
-        return <AccountSettings />;
+        return <StorageSettings
+          successMessage={successMessage}
+          errorMessage={errorMessage}
+          setSuccessMessage={setSuccessMessage}
+        />;
     }
   };
 

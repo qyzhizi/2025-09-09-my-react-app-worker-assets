@@ -1,5 +1,5 @@
-import { generateJWT } from '@/common'
-import {normalizeGitHubPath} from "@/common";
+import { generateJWT } from '@/utils/tools'
+import {normalizeGitHubPath} from "@/utils/tools";
 import {batchGetFileContents} from "@/durable/github/githubGetContent";
 
 interface InstallationDataResponse {

@@ -4,7 +4,8 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Context } from "hono";
 import type { ProviderType } from "../types/provider";
-import { v4 as uuidv4 } from 'uuid';
+// import { v4 as uuidv4 } from 'uuid';
+import { AppError } from "@/types/error"
 
 export interface User {
     id: string;
@@ -16,6 +17,7 @@ export interface User {
 
 export const createOrUpdateUser = async (
   c: Context,
+  userId: string,
   name: string,
   email: string,
   avatar_url: string,
@@ -23,42 +25,47 @@ export const createOrUpdateUser = async (
   providerUserId: string,
 ): Promise<User> => {
   const db = drizzle(c.env.DB, { schema: tables });
-
-  // 1. Find users (by email)
-  const existingUser = await db.query.users.findFirst({
-    where: (users, { eq }) => eq(users.email, email),
-  });
-
-  if (existingUser) {
-    await updateUserIfNeeded(db, existingUser, {
-      name,
-      email,
-      avatar_url,
+  try {
+    // 1. Find users (by id)
+    const existingUser = await db.query.users.findFirst({
+      where: (users, { eq }) => eq(users.id, userId),
     });
 
-    await ensureUserAuthExists(
-      c,
-      existingUser.id,
-      providerType,
-      providerUserId,
+    if (existingUser) {
+      await updateUserIfNeeded(db, existingUser, {
+        name,
+        email,
+        avatar_url,
+      });
+
+      await ensureUserAuthExists(
+        c,
+        existingUser.id,
+        providerType,
+        providerUserId,
+      );
+
+      return existingUser;
+    }
+
+    // 2. Create new user
+    return await createUserWithAuth(
+      db,
+      {
+        id: userId,
+        name,
+        email,
+        avatar_url,
+      },
+      {
+        providerType,
+        providerUserId,
+      },
     );
-
-    return existingUser;
+  } catch (error) {
+    console.error("createOrUpdateUser failed", error);
+    throw new AppError("CREATE_OR_UPDATE_USER_FAILED", "Failed to create or update user", error, 500);
   }
-
-  // 2. Create new user
-  return await createUserWithAuth(
-    db,
-    {
-      name,
-      email,
-      avatar_url,
-    },
-    {
-      providerType,
-      providerUserId,
-    },
-  );
 };
 
 const updateUserIfNeeded = async (
@@ -91,45 +98,52 @@ const ensureUserAuthExists = async (
   providerType: ProviderType,
   providerUserId: string,
 ) => {
-  const existingAuth = await findFirstUserAuth(
-    c,
-    userId,
-    providerType,
-    providerUserId,
-  );
+  try {
+    const existingAuth = await findFirstUserAuth(
+      c,
+      userId,
+      providerType,
+      providerUserId,
+    );
 
-  if (existingAuth) return;
+    if (existingAuth) return;
 
-  const db = drizzle(c.env.DB, { schema: tables });
+    const db = drizzle(c.env.DB, { schema: tables });
 
-  await db.insert(userAuths).values({
-    userId,
-    providerType,
-    providerUserId,
-  });
+    await db.insert(userAuths).values({
+      userId,
+      providerType,
+      providerUserId,
+    });
+  } catch (error) {
+    console.error("ensureUserAuthExists failed", error);
+    throw new Error("ENSURE_USER_AUTH_FAILED");
+  }
 };
 
 
 const createUserWithAuth = async (
   db: ReturnType<typeof drizzle>,
-  userData: Pick<User, "name" | "email" | "avatar_url">,
+  userData: Pick<User, "id" | "name" | "email" | "avatar_url">,
   authData: {
     providerType: ProviderType;
     providerUserId: string;
   },
 ): Promise<User> => {
-  const userId = uuidv4();
+  // const userId = uuidv4();
+  let newUser;
+  try {
+    const insertedUsers = await db.insert(users).values({ ...userData }).returning();
 
-  const insertedUsers = await db
-    .insert(users)
-    .values({ id: userId, ...userData })
-    .returning();
+    if (insertedUsers.length === 0) {
+      throw new Error("USER_INSERT_FAILED");
+    }
 
-  if (insertedUsers.length === 0) {
+    newUser = insertedUsers[0];
+  } catch (error) {
+    console.error("user insert failed", error);
     throw new Error("USER_INSERT_FAILED");
   }
-
-  const newUser = insertedUsers[0];
 
   try {
     await db.insert(userAuths).values({
@@ -139,7 +153,11 @@ const createUserWithAuth = async (
     });
   } catch (error) {
     console.error("userAuth 插入失败，回滚用户", error);
-    await db.delete(users).where(eq(users.id, newUser.id));
+    try {
+      await db.delete(users).where(eq(users.id, newUser.id));
+    } catch (deleteError) {
+      console.error("回滚用户失败", deleteError);
+    }
     throw new Error("USER_AUTH_INSERT_FAILED");
   }
 
@@ -149,8 +167,8 @@ const createUserWithAuth = async (
 
 export const findManyUsers = async (c: Context): Promise<User[]> => {
     const db = drizzle(c.env.DB, { schema: tables });
-    // return await db.query.users.findMany();
-    const res = await db.query.users.findMany({
+    try {
+      const res = await db.query.users.findMany({
         columns: {
           id: true,
           name: true,
@@ -165,7 +183,11 @@ export const findManyUsers = async (c: Context): Promise<User[]> => {
           updatedAt: true
         }
       });
-    return res
+      return res;
+    } catch (error) {
+      console.error("findManyUsers failed", error);
+      throw new Error("FIND_USERS_FAILED");
+    }
 };
 
 export const getUserAvatarUrl = async (
@@ -173,13 +195,18 @@ export const getUserAvatarUrl = async (
   userId: string
   ): Promise<string | null> =>{
   const db = drizzle(c.env.DB, { schema: tables });
-  const user = await db.query.users.findFirst({
-    where: (users, { eq }) => eq(users.id, userId),
-    columns: {
-      avatar_url: true
-    }
-  });
-  return user?.avatar_url ?? null;
+  try {
+    const user = await db.query.users.findFirst({
+      where: (users, { eq }) => eq(users.id, userId),
+      columns: {
+        avatar_url: true
+      }
+    });
+    return user?.avatar_url ?? null;
+  } catch (error) {
+    console.error("getUserAvatarUrl failed", error);
+    throw new Error("GET_USER_AVATAR_FAILED");
+  }
 }
 
 export const getUserById = async (
@@ -187,8 +214,13 @@ export const getUserById = async (
   userId: string
 ): Promise<User | null> => {
   const db = drizzle(c.env.DB, { schema: tables });
-  const user = await db.query.users.findFirst({
-    where: (users, { eq }) => eq(users.id, userId),
-  });
-  return user ?? null;
+  try {
+    const user = await db.query.users.findFirst({
+      where: (users, { eq }) => eq(users.id, userId),
+    });
+    return user ?? null;
+  } catch (error) {
+    console.error("getUserById failed", error);
+    throw new Error("GET_USER_BY_ID_FAILED");
+  }
 };

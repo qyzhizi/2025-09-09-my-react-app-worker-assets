@@ -68,7 +68,7 @@ export const githubRepoAccess = sqliteTable("github_access", {
   githubUserName: text("github_user_name", { length: 255 }),
   vaultName: text("vault_name", { length: 255 })
     .notNull()
-    .default("memoflowVault"),
+    .default("memoflow"),
 });
 
 

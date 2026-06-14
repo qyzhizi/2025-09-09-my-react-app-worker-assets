@@ -3,20 +3,54 @@ import { NotFoundError, ValidationError } from "@/types/error"
 import type { Task, PushGitRepoTaskParams, PushGitRepoTaskRespon } from "@/types/durable";
 import { SqliteRepository } from "@/durable/repository";
 
-import {batchGetFileContents} from "@/durable/github/githubGetContent";
-import { getMetaDataFromContent } from "@/common"
+import {batchGetFileContents, checkFilesExistInRepo} from "@/durable/github/githubGetContent";
+import { getMetaDataFromContent } from "@/utils/tools"
 import { createEmptyFolderPathInRepoIfNotExists } from "@/durable/github/githubApp";
 import { searchCommits } from "@/durable/github/searchCommits";
 import type { SearchCommitResult } from "@/durable/github/searchCommits";
 import { COMMITFILTER, PER_PAGE } from "@/ConstVar";
-import { edgeHash64, mapUuidQuick } from "@/durable/titleHash"
+import { edgeHash64, mapUuidQuick, hex16ToUuid, uuidToHex16 } from "@/utils/titleHash"
 import type { UpsertArticleContentParams } from "@/durable/repository/types";
+import {initQdrantCollection} from "@/durable/qdrant/initQdrant";
+import type { VectorsConfig, QuantizationConfig } from '@/durable/qdrant/createCollection';
+import type { CreatePayloadIndexParam } from '@/durable/qdrant/payloadIndex';
+import type { QdrantSettings } from "@/utils/qdrant";
+
+import { upsertCollectionPoints, type UpsertPointsParam } from "@/durable/qdrant/upsertPoints";
+import { queryCollectionPoints, type QueryPointsParam } from "@/durable/qdrant/queryPoints";
+import {VECTORINDEXTYPE} from "@/types/durable";
 
 const MAX_ARTICLES_TO_STORE = 1000;
 const SEARCH_COMMITS_THRESHOLD = 100;
 
-const EMBEDDING_MODEL = '@cf/qwen/qwen3-embedding-0.6b'
+// const EMBEDDING_MODEL = '@cf/qwen/qwen3-embedding-0.6b'
+const EMBEDDING_MODEL = '@cf/google/embeddinggemma-300m'
 const INDEX_NAME_PREFIX = 'MEMOFLOW_INDEX_'
+
+// 定义一个与接口严格绑定的 Keys 常量
+const QDRANT_KEYS: { [K in keyof QdrantSettings]: K } = {
+  qdrantUrl: 'qdrantUrl',
+  qdrantApiKey: 'qdrantApiKey',
+  collectionName: 'collectionName'
+};
+
+// 定义 Qdrant 获取集合详情的响应类型接口
+export interface GetCollectionInfoResponse {
+  result: {
+    status: 'green' | 'yellow' | 'red' | string;
+    optimizer_status: 'ok' | string;
+    indexed_vectors_count?: number;
+    points_count?: number;
+    segments_count?: number;
+    config: Record<string, any>;        // 集合的具体配置项（params, hnsw_config 等）
+    payload_schema: Record<string, any>; // 集合中已创建的 payload 索引 Schema
+    update_queue?: number; // 可选：当前待处理的更新操作数量
+    [key: string]: any; // 兼容 Qdrant 原生返回的其他字段
+  };
+  status: 'ok' | string;
+  time: number;
+  [key: string]: any; // 兼容 Qdrant 原生返回的其他字段
+}
 
 /** A Durable Object's behavior is defined in an exported Javascript class */
 export class MyDurableObject extends DurableObject<Env> {
@@ -55,11 +89,6 @@ export class MyDurableObject extends DurableObject<Env> {
         return `Hello, ${name}!  this message from DurableObject`;
     }
 
-    async listTasks(): Promise<Task[]> {
-        const entries = await this.state.storage.list<Task>();
-        return Array.from(entries.values());
-    }
-
     private isTaskPayload(data: any): data is Partial<Task> {
         // Your verification logic, such as checking the commitMessage/content type
         return (
@@ -70,24 +99,6 @@ export class MyDurableObject extends DurableObject<Env> {
           (data.completed === undefined || typeof data.completed === 'boolean')
         )
       }
-
-    async createTask(data: Task): Promise<Task> {
-        if (!this.isTaskPayload(data)) {
-            throw new ValidationError('Type Check Error: Invalid payload');
-        }
-
-        const task: Task = {
-            id: data.id ,
-            commitMessage: data.commitMessage ?? '',
-            completed: false,
-            createdAt: data.createdAt ?? new Date().toISOString(),
-            content: data.content ?? '',
-            filePath: data.filePath ?? ''
-        };
-
-        await this.state.storage.put(data.id, task);
-        return task;
-    }
 
     async createTaskAndSaveArticleToDB(data: PushGitRepoTaskParams): Promise<PushGitRepoTaskParams> {
         if (!this.isTaskPayload(data)) {
@@ -113,7 +124,6 @@ export class MyDurableObject extends DurableObject<Env> {
 
         await this.state.storage.put(data.id, params);
         // save content to DO SQL for later query and analysis
-        console.log("Saving content to Durable Object SQL:", data.content);
         await this.saveContentToDOSql(
             params.id,
             params.title,
@@ -121,15 +131,6 @@ export class MyDurableObject extends DurableObject<Env> {
             params.content
         );
         return params;
-    }
-
-    async getTask(id: string): Promise<Task> {
-        const task = await this.state.storage.get<Task>(id);
-        // const task: Task = await this.state.storage.get(id);
-        if (!task) {
-            throw new NotFoundError(`Durable Task with id=${id} not found`);
-        }
-        return task;
     }
 
     async saveContentToDOSql(id: string, title: string, date: string, content: string): Promise<any> {
@@ -171,11 +172,102 @@ export class MyDurableObject extends DurableObject<Env> {
         return promise;
     }
 
+    private async upsertEmbeddingToCloudflareVectorIndex(title: string, titleHash: string, embedding: any, userId: string, repoName: string, vaultPathInRepo: string) {
+        // Get vector index number using mapUuidQuick (maps to 0-9) to distribute load
+        const indexNumber = mapUuidQuick(userId, 10);
+        const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
+        const vectorIndex = this.env[vectorIndexKey] as VectorizeIndex;
+                    
+        // Insert embedding into the vector index with userId as namespace
+        if (vectorIndex) {
+            const vectors = [
+                {
+                    id: titleHash,
+                    values: embedding,
+                    metadata: { repoAndVaultPath: `${repoName}-${vaultPathInRepo}`, title },
+                    namespace: userId,
+                },
+            ];
+            await this.safeUpsertToCloudflareIndex(vectors, userId, vectorIndex);
+
+            // Wait for the index to process the new embedding before querying
+            // await new Promise(resolve => setTimeout(resolve, 300));
+        }
+    }
+
+    /**
+     * Safely upsert vectors into a Cloudflare Vector index.
+     * Only increments the per-user vector count for vectors that did not exist before.
+     */
+    private async safeUpsertToCloudflareIndex(vectors: any[], userId: string, vectorIndex: VectorizeIndex) {
+        try {
+            const ids = vectors.map(v => v.id);
+            // get existing vectors by id in chunks to respect Cloudflare limit (max 20 ids per request)
+            const existingIdSet = new Set<string>();
+            const CHUNK_SIZE = 20;
+            for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+                const chunk = ids.slice(i, i + CHUNK_SIZE);
+                try {
+                    const res = await vectorIndex.getByIds(chunk);
+                    if (Array.isArray(res)) {
+                        res.forEach((v: any) => existingIdSet.add(v.id));
+                    }
+                } catch (err) {
+                    console.warn(`getByIds chunk failed (ids ${i}-${i + chunk.length - 1}), assuming those ids may be new`, err);
+                    // If a chunk fails, we continue so missing ids are treated as new
+                }
+            }
+            const newCount = ids.filter(id => !existingIdSet.has(id)).length;
+
+            // perform the upsert for all vectors (so existing ones still get updated)
+            await vectorIndex.upsert(vectors);
+
+            // only increment the KV meta count for truly new vectors
+            if (newCount > 0) {
+                this.incrementCloudflareVectorCountsOfUserInKvMeta(newCount, userId);
+            }
+        } catch (error) {
+            console.error('safeUpsertToCloudflareIndex failed:', error);
+            // still try a best-effort upsert if something went wrong
+            try { await vectorIndex.upsert(vectors); } catch (e) { console.error('fallback upsert failed', e); }
+        }
+    }
+
+    private async upsertEmbeddingToQdrantVectorIndex(title: string, titleHash: string, embedding: any, repoName: string, vaultPathInRepo: string) {
+        // Get Qdrant settings from KvMeta
+        const qdrantSettings = await this.getQdrantSettingsFromKvMeta();
+        if (!qdrantSettings) {
+            console.warn("Qdrant settings not found in KvMeta, skipping embedding upsert to Qdrant");
+            throw new Error("Qdrant settings not found in KvMeta");
+        }
+        const upsertParam: UpsertPointsParam = {
+            points: [{
+                id: hex16ToUuid(titleHash), // Use title hash as ID, converted to UUID format
+                vector: embedding,
+                payload: {repoAndVaultPath: `${repoName}-${vaultPathInRepo}`, title}
+            }]
+        }   
+        try {        
+            const result = await this.upsertCollectionPoints(
+                qdrantSettings.qdrantUrl,
+                qdrantSettings.collectionName,
+                qdrantSettings.qdrantApiKey,
+                upsertParam
+            );
+            return result;
+        } catch (error) {
+            console.error('Failed to upsert embedding to Qdrant vector index:', error);
+            throw new Error('Failed to upsert embedding to Qdrant vector index');
+        }      
+    }
+
     private async _doProcessGithubPushTask(taskId: string, userId: string): Promise<PushGitRepoTaskRespon> {
         const taskParams = await this.state.storage.get<PushGitRepoTaskParams>(taskId);
         if (!taskParams) {
             throw new NotFoundError(`Task with taskId=${taskId} not found`);
         }
+        // get vectorIndexType from KvMeta, default to VECTORINDEXTYPE.CLOUDFLARE if not set
+        const vectorIndexProvider = this.sqliteRepository.getKvMeta("vectorIndexProvider") as string | undefined;
 
         const { commitMessage, accessToken, githubUserName, repoName, vaultPathInRepo, vaultName, title, content, completed } = taskParams;
 
@@ -183,11 +275,8 @@ export class MyDurableObject extends DurableObject<Env> {
             return { "taskId": taskId, "completed": true };
         }
 
-        console.log("title: ", title, "title.length: ", title.length)
         const titleHash = edgeHash64(title)
-        console.log("titleHash: ", titleHash)
         const filePath = `${vaultPathInRepo}/${vaultName}/${titleHash.slice(0,2)}/${titleHash.slice(2,4)}/${titleHash.slice(4)}.md`
-        console.log("filePath: ", filePath)
 
         await this.pushFileToGitHub({
             accessToken,
@@ -200,7 +289,7 @@ export class MyDurableObject extends DurableObject<Env> {
         });
 
         // Delete a processed task
-        await this.deleteTask(taskId);
+        await this.state.storage.delete(taskId);
         
         // Get title embedding and save to vector index
         if (title && title.trim()) {
@@ -209,29 +298,13 @@ export class MyDurableObject extends DurableObject<Env> {
                 const embeddings = await this.env.AI.run(EMBEDDING_MODEL as any, {
                     text: [title],
                 });
-                console.log("Generated embeddings for title:", title);
                 
                 // Check if embeddings has data (not an async response)
                 if ('data' in embeddings && Array.isArray(embeddings.data) && embeddings.data.length > 0) {
-                    // Get vector index number using mapUuidQuick (maps to 0-9) to distribute load
-                    const indexNumber = mapUuidQuick(userId, 10);
-                    const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
-                    const vectorIndex = this.env[vectorIndexKey] as VectorizeIndex;
-                    
-                    // Insert embedding into the vector index with userId as namespace
-                    if (vectorIndex) {
-                        await vectorIndex.upsert([
-                            {
-                                id: titleHash,
-                                values: embeddings.data[0],
-                                metadata: { title, repoName },
-                                namespace: userId,
-                            },
-                        ],);
-                        console.log(`Embedding saved to vector index ${indexNumber} (namespace: userId with id: ${titleHash}`);
-
-                        // Wait for the index to process the new embedding before querying
-                        // await new Promise(resolve => setTimeout(resolve, 300));
+                    if (vectorIndexProvider === VECTORINDEXTYPE.CLOUDFLARE) {
+                        this.upsertEmbeddingToCloudflareVectorIndex(title, titleHash, embeddings.data[0], userId, repoName, vaultPathInRepo);
+                    } else if (vectorIndexProvider === VECTORINDEXTYPE.QDRANT) {
+                        await this.upsertEmbeddingToQdrantVectorIndex(title, titleHash, embeddings.data[0], repoName, vaultPathInRepo);
                     }
                 } else {
                     console.warn('AI returned async response or no data, skipping embedding storage');
@@ -245,38 +318,281 @@ export class MyDurableObject extends DurableObject<Env> {
         return { "taskId": taskId, "completed": true };
     }
 
-    async searchSimilarTitlesInVectorIndex(query: string, topK: number, userId: string, repoName: string): Promise<any> {
+    async fetch(request: Request): Promise<Response> {
+        const url = new URL(request.url);
+
+        if (url.pathname === "/upsert-collection-points") {
+            if (request.method !== "POST") {
+                return new Response("Method Not Allowed", {
+                    status: 405,
+                    headers: {
+                        "Allow": "POST",
+                        "Content-Type": "application/json"
+                    }
+                });
+            }
+            const qdrantUrl = url.searchParams.get('qdrantUrl') ?? url.searchParams.get('url') ?? request.headers.get('x-qdrant-url');
+            const collectionName = url.searchParams.get('collectionName') ?? request.headers.get('x-qdrant-collection-name');
+            const apiKey = url.searchParams.get('apiKey') ?? request.headers.get('x-qdrant-api-key');
+            const repoName = request.headers.get('x-repoName') ?? '';
+            const vaultPathInRepo = request.headers.get('x-vaultPathInRepo') ?? '';
+
+            // get body
+            const {titles} = await request.json() as { titles: string[] };
+            // get embeddings for the titles
+            const embeddings = await this.env.AI.run(EMBEDDING_MODEL as any, { text:[...titles] });
+            const upsertParam: UpsertPointsParam = {
+                points: (embeddings.data as number[][]).map((vector, idx) => ({
+                    id: hex16ToUuid(edgeHash64(titles[idx])), // Use title hash as ID, converted to UUID format
+                    vector,
+                    payload: {repoAndVaultPath: `${repoName}-${vaultPathInRepo}`, title: titles[idx] }
+                }))
+            }
+
+
+            if (!qdrantUrl || !collectionName || !apiKey) {
+                return new Response(JSON.stringify({
+                    error: "Missing required fields: qdrantUrl/url, collectionName, apiKey"
+                }), {
+                    status: 400,
+                    headers: { "Content-Type": "application/json" }
+                });
+            }
+
+            try {
+                const result = await this.upsertCollectionPoints(
+                    qdrantUrl,
+                    collectionName,
+                    apiKey,
+                    upsertParam
+                );
+                return new Response(JSON.stringify(result), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" }
+                });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                return new Response(JSON.stringify({ error: message }), {
+                    status: 500,
+                    headers: { "Content-Type": "application/json" }
+                });
+            }
+        } else if (url.pathname === "/upsert-vectors-to-cloudflare-index") {
+            if (request.method !== "POST") {
+                return new Response("Method Not Allowed", {
+                    status: 405,
+                    headers: {
+                        "Allow": "POST",
+                        "Content-Type": "application/json"
+                    }
+                });
+            }
+            const repoName = request.headers.get('x-repoName') ?? '';
+            const vaultPathInRepo = request.headers.get('x-vaultPathInRepo') ?? 
+            '';
+            const userId = request.headers.get('x-userId') ?? '';
+            // get body
+            const {titles} = await request.json() as { titles: string[] };
+            // get embeddings for the titles
+            const embeddings = await this.env.AI.run(EMBEDDING_MODEL as any, { text:[...titles] });
+
+            const indexNumber = mapUuidQuick(userId, 10);
+            const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
+            const vectorIndex = this.env[vectorIndexKey] as VectorizeIndex;
+            if (vectorIndex) {
+                const vectors = (embeddings.data as number[][]).map((embedding, idx) => ({
+                    id: edgeHash64(titles[idx]),
+                    values: embedding,
+                    metadata: { repoAndVaultPath: `${repoName}-${vaultPathInRepo}`, title: titles[idx] },
+                    namespace: userId,
+                }));
+                await this.safeUpsertToCloudflareIndex(vectors, userId, vectorIndex);
+                return new Response(JSON.stringify({ success: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" }
+                });
+            }
+        }
+        return new Response("Not Found", { status: 404 });
+    }
+
+    async initQdrantCollectionForUser(
+        url: string,
+        collectionName: string,
+        apiKey: string,
+        vectors: VectorsConfig,
+        indexParam: CreatePayloadIndexParam,
+        quantizationConfig?: QuantizationConfig
+    ): Promise<any> {
+        // save qdrant settings to KvMeta for later use
+        await this.setQdrantSettingsToKvMeta({
+            qdrantUrl: url,
+            qdrantApiKey: apiKey,
+            collectionName: collectionName
+        });
+
+        const result = await initQdrantCollection(
+            url,
+            collectionName,
+            apiKey,
+            vectors,
+            indexParam,
+            quantizationConfig
+        );
+        return result;
+    }
+
+    /**
+     * 获取 Qdrant 集合的详细信息 (Get Collection Info)
+     * @param url - Qdrant 服务的基本 URL (例如: http://localhost:6333)
+     * @param collectionName - 集合名称
+     * @param apiKey - API 密钥
+     * @returns 包含集合详情的 Promise 对象
+     */
+    async fetchCollectioinStats(
+        url: string,
+        collectionName: string,
+        apiKey: string
+    ): Promise<GetCollectionInfoResponse> {
+        try {
+            const response = await fetch(`${url}/collections/${collectionName}`,
+                {
+                    method: 'GET', // 使用 GET 方法
+                    headers: {
+                        'api-key': apiKey
+                    }
+                }
+            );
+
+            // 1. 处理常见的 HTTP 错误（如 401 未授权、404 集合不存在等）
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            // 2. 解析成功的响应
+            const data: GetCollectionInfoResponse = await response.json();
+            return data;
+        } catch (error) {
+            // 3. 捕获网络异常或上面抛出的错误
+            console.error(`获取集合 [${collectionName}] 详情失败:`, error);
+            throw error;
+        }
+    }
+
+    async getCloudflareVectorIndexStatus(userId: string): Promise<any> {
+        // Get vector index number using mapUuidQuick (maps to 0-9) to distribute load
+        const indexNumber = mapUuidQuick(userId, 10);
+        const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
+        const vectorIndex = this.env[vectorIndexKey] as unknown as Vectorize;
+        // 2. 获取该索引的详细信息（包含维度、向量数量等）
+        const indexDetails : VectorizeIndexInfo = await vectorIndex.describe();
+        const dimensions = indexDetails.dimensions ; // 获取维度
+        // const vectorCount = indexDetails.vectorCount; // 获取当前向量总数
+        const vectorCount = this.getCloudflareVectorCountsOfUserFromKvMeta(userId); // 从 KvMeta 获取向量总数
+        return {
+            dimensions,
+            vectorCount
+        };
+    }
+
+    async resetCloudflareNamespaceVectorCountsInKvMeta(userId: string): Promise<void> {
+        this.sqliteRepository.setKvMeta(`vectorCounts_${userId}`, 0);
+    }
+
+    upsertCollectionPoints = upsertCollectionPoints;
+    queryCollectionPoints = queryCollectionPoints;
+
+    async searchInCloudflareVectorIndex(embedding: number[], topK: number, userId: string, repoAndVaultPath: string): Promise<any> {
+        // Get vector index number using mapUuidQuick (maps to 0-9) to distribute load
+        const indexNumber = mapUuidQuick(userId, 10);
+        const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
+        const vectorIndex = this.env[vectorIndexKey] as unknown as Vectorize;
+        if (!vectorIndex) {
+            console.warn(`Vector index ${indexNumber} not found for userId: ${userId}`);
+            return null;
+        }
+        let queryParam : VectorizeQueryOptions= {
+            topK: topK,
+            namespace: userId,
+            returnValues: true,
+            returnMetadata: "all",
+        };
+        if (repoAndVaultPath) {
+            queryParam.filter = { repoAndVaultPath: { $eq: repoAndVaultPath } };
+        }
+
+        const queryResult = await vectorIndex.query(
+            embedding,
+            queryParam
+        );
+        // Transform results to return only id, score, metadata in order
+        const transformedResults = queryResult.matches?.map((match: any) => ({
+            id: match.id,
+            score: match.score,
+            metadata: match.metadata,
+        })) || [];
+
+        return transformedResults;
+    }
+
+    async searchInQdrantVectorIndex(embedding: number[], topK: number, repoAndVaultPath: string, qdrantSettings: QdrantSettings): Promise<any> {
+        let queryParam: QueryPointsParam = {
+            query: embedding,
+            top: topK,
+            with_payload: true, // 返回 payload 数据
+            with_vector: false, // 不返回向量数据以节省带宽
+        };
+        if (repoAndVaultPath) {
+            queryParam.filter = {
+                must: [
+                    {
+                        key: "repoAndVaultPath",
+                        match: {
+                            value: repoAndVaultPath
+                        }
+                    }
+                ]
+            }
+        }
+        try {
+            const queryResult = await queryCollectionPoints(
+                qdrantSettings.qdrantUrl,
+                qdrantSettings.collectionName,
+                qdrantSettings.qdrantApiKey,
+                queryParam
+            );
+            
+            let transformedResults: {
+                id: string; // 转换 ID 为 hex16 格式
+                score: number; 
+                metadata: Record<string, any> | undefined;
+            }[] = [];
+            queryResult.result.points.forEach((point) => {
+                transformedResults.push({
+                    id: uuidToHex16(point.id.toString()), // 转换 ID 为 hex16 格式
+                    score: point.score,
+                    metadata: point.payload
+                });
+            });
+            return transformedResults;
+            } catch (error) {
+            console.error("Main 执行时发生错误:", error);
+            }
+    }
+
+    async searchSimilarTitlesInVectorIndex(query: string, topK: number, userId: string, repoAndVaultPath: string): Promise<any> {
         try {
             const embeddings = await this.env.AI.run(EMBEDDING_MODEL as any, {
                 text: [query],
             });
             
             if ('data' in embeddings && Array.isArray(embeddings.data) && embeddings.data.length > 0) {
-                const indexNumber = mapUuidQuick(userId, 10);
-                const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
-                const vectorIndex = this.env[vectorIndexKey] as VectorizeIndex;
-
-                if (vectorIndex) {
-                    const queryResult = await vectorIndex.query(
-                        embeddings.data[0],
-                        { topK: topK, 
-                          namespace: userId, 
-                          filter: { repoName: repoName }, // Filter results by repoName in metadata
-                          returnValues: true,
-                          returnMetadata: "all",
-                        }
-                    );
-                    // Transform results to return only id, score, metadata in order
-                    const transformedResults = queryResult.matches?.map((match: any) => ({
-                        id: match.id,
-                        score: match.score,
-                        metadata: match.metadata,
-                    })) || [];
-                    console.log(`Search query: "${query}" returned ${transformedResults.length} results from vector index ${indexNumber}`);
-                    return transformedResults;
-                } else {
-                    console.warn(`Vector index ${indexNumber} not found for userId: ${userId}`);
-                    return null;
+                const vectorIndexProvider = this.sqliteRepository.getKvMeta("vectorIndexProvider") as string | undefined;
+                if (vectorIndexProvider === VECTORINDEXTYPE.CLOUDFLARE) {
+                    return await this.searchInCloudflareVectorIndex(embeddings.data[0], topK, userId, repoAndVaultPath);
+                } else if (vectorIndexProvider === VECTORINDEXTYPE.QDRANT) {
+                    // Search in Qdrant vector index
+                    return await this.searchInQdrantVectorIndex(embeddings.data[0], topK, repoAndVaultPath, await this.getQdrantSettingsFromKvMeta() as QdrantSettings);
                 }
             } else {
                 console.warn('AI returned async response or no data for search query');
@@ -288,6 +604,26 @@ export class MyDurableObject extends DurableObject<Env> {
         }
 
     }
+
+    async checkIfFilesExistOnGitHub(params: {
+        accessToken: string;
+        githubUserName: string;
+        repoName: string;
+        dbBranch: string;
+        filePaths: string[];
+    }): Promise< any> {
+        const { accessToken, githubUserName, repoName, dbBranch, filePaths } = params;
+        const result = await checkFilesExistInRepo({
+            owner: githubUserName,
+            repo: repoName,
+            filePaths,
+            branch: dbBranch,
+            token: accessToken
+        });
+
+        return result;
+    }
+
 
     /**
      * Push file contents to GitHub repository (create or update) with built-in retry mechanism to handle 409 conflicts.
@@ -398,40 +734,6 @@ export class MyDurableObject extends DurableObject<Env> {
         });
     }
 
-    // 2) Return Promise<Task>, no longer directly construct Response
-    async updateTask(taskId: string, data: Partial<Task>): Promise<Task> {
-        const existing = await this.state.storage.get<Task>(taskId)
-        if (!existing) {
-        // Here throw NotFoundError
-        throw new NotFoundError(`Task with taskId=${taskId} not found`)
-        }
-
-        if (!this.isTaskPayload(data)) {
-        // Here throw ValidationError
-        throw new ValidationError('Invalid task payload')
-        }
-
-        const updated: Task = {
-        ...existing,
-        commitMessage: data.commitMessage ?? existing.commitMessage,
-        content: data.content ?? existing.content,
-        completed: data.completed ?? existing.completed,
-        createdAt: existing.createdAt,
-        filePath: data.filePath ?? existing.filePath,
-        }
-
-        await this.state.storage.put(taskId, updated)
-        return updated
-    }
-
-    async deleteTask(taskId: string): Promise<void> {
-        const existed = await this.state.storage.get<Task>(taskId);
-        if (!existed) {
-            throw new NotFoundError(`Task with taskId=${taskId} not found`);
-        }
-        await this.state.storage.delete(taskId);
-    }
-
     // Reset DO storage and SQLite database
     async resetDoKeyStorageAndSqlite(): Promise<any> {
         try {
@@ -470,7 +772,73 @@ export class MyDurableObject extends DurableObject<Env> {
         }
     }
 
+    // get vector index type from KvMeta
+    async getVectorIndexProviderFromKvMeta(): Promise<any> {
+        const vectorIndexProvider = this.sqliteRepository.getKvMeta("vectorIndexProvider");
+        if (!vectorIndexProvider) {
+            return null;
+        }
+        return { vectorIndexProvider: vectorIndexProvider };
+    }
+    
+    // set vector index type to KvMeta
+    async setVectorIndexProviderToKvMeta(vectorIndexProvider: string): Promise<void> {
+        // store the primitive string value (vectorIndexType)
+        // SqliteRepository.setKvMeta expects string | number | boolean
+        this.sqliteRepository.setKvMeta("vectorIndexProvider", vectorIndexProvider);
+    }
+
     // The following methods are implemented by proxying to SqliteRepository
+
+    // set qdrantUrl and apiKey to KvMeta
+    async setQdrantSettingsToKvMeta(params: QdrantSettings): Promise<any | null> {
+        // 使用常量代替硬编码字符串
+        this.sqliteRepository.setKvMeta(QDRANT_KEYS.qdrantUrl, params.qdrantUrl)
+        this.sqliteRepository.setKvMeta(QDRANT_KEYS.qdrantApiKey, params.qdrantApiKey)
+        this.sqliteRepository.setKvMeta(QDRANT_KEYS.collectionName, params.collectionName)
+
+        return {
+            qdrantUrl: params.qdrantUrl,
+            qdrantApiKey: params.qdrantApiKey,
+            collectionName: params.collectionName,
+        }
+    }
+
+    incrementCloudflareVectorCountsOfUserInKvMeta(incrementBy: number, userId: string): void {
+        const key = `vectorCounts_${userId}`;
+        const currentCount = Number(this.sqliteRepository.getKvMeta(key)) || 0;
+        const newCount = currentCount + incrementBy;
+        this.sqliteRepository.setKvMeta(key, newCount);
+    }
+
+    decrementCloudflareVectorCountsOfUserInKvMeta(decrementBy: number, userId: string): void {
+        const key = `vectorCounts_${userId}`;
+        const currentCount = Number(this.sqliteRepository.getKvMeta(key)) || 0;
+        const newCount = Math.max(currentCount - decrementBy, 0); // 确保不为负数
+        this.sqliteRepository.setKvMeta(key, newCount);
+    }
+
+    getCloudflareVectorCountsOfUserFromKvMeta(userId: string): number {
+        const key = `vectorCounts_${userId}`;
+        const count = Number(this.sqliteRepository.getKvMeta(key)) || 0;
+        return count;
+    }
+
+    async getQdrantSettingsFromKvMeta(): Promise<QdrantSettings | null> {
+        const qdrantUrl = this.sqliteRepository.getKvMeta(QDRANT_KEYS.qdrantUrl);
+        const qdrantApiKey = this.sqliteRepository.getKvMeta(QDRANT_KEYS.qdrantApiKey);
+        const collectionName = this.sqliteRepository.getKvMeta(QDRANT_KEYS.collectionName);
+
+        if (!qdrantUrl) {
+            return null;
+        }
+
+        return {
+            qdrantUrl,
+            qdrantApiKey: qdrantApiKey || '',
+            collectionName: collectionName || '',
+        }
+    }
 
     /**
      * Insert a new article content record into the articleContent table
@@ -481,13 +849,11 @@ export class MyDurableObject extends DurableObject<Env> {
         date: string;
         content: string;
     }): Promise<{ id: string }> {
-        console.log("Inserting article content:", params);
         return this.sqliteRepository.insertArticleContent(params);
     }
 
     // upsert article content by id, if id exists, update; if not, insert new record
     async upsertArticleContent(params: UpsertArticleContentParams): Promise<{ id: string }> {
-        console.log("Upserting article content:", params);
         return this.sqliteRepository.upsertArticleContent(params);
     }
 

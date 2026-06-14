@@ -1,0 +1,132 @@
+name: Delete All Cloudflare Vector Indexes
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: delete-vector-indexes
+  cancel-in-progress: false
+
+jobs:
+  delete-indexes:
+    runs-on: ubuntu-latest
+
+    env:
+      INDEX_PREFIX: memoflow-index
+
+    steps:
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Delete all matching indexes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -e
+
+          # --- API 调用函数（带重试）---
+          call_api() {
+            local method=$1
+            local url=$2
+            local data=$3
+
+            local max_retries=4
+            local attempt=1
+            local wait=2
+
+            while [ $attempt -le $max_retries ]; do
+              echo "🌐 API Call [$method] $url (attempt $attempt)" >&2
+
+              if [ -z "$data" ]; then
+                response=$(curl -s -w "\n%{http_code}" -X "$method" "$url" \
+                  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+              else
+                response=$(curl -s -w "\n%{http_code}" -X "$method" "$url" \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                  -d "$data")
+              fi
+
+              http_code=$(echo "$response" | tail -n1)
+              body=$(echo "$response" | sed '$d')
+
+              if [ "$http_code" -ge 500 ] || [ "$http_code" -eq 429 ]; then
+                echo "⚠️ HTTP $http_code, retrying in ${wait}s..." >&2
+              elif [ "$http_code" -ge 400 ]; then
+                echo "❌ HTTP $http_code error: $body" >&2
+                return 1
+              else
+                if echo "$body" | jq . >/dev/null 2>&1; then
+                  echo "$body"
+                  return 0
+                else
+                  echo "⚠️ Invalid JSON, retrying in ${wait}s..." >&2
+                fi
+              fi
+
+              sleep $wait
+              attempt=$((attempt + 1))
+              wait=$((wait * 2))
+            done
+
+            echo "❌ ERROR: API failed after retries." >&2
+            return 1
+          }
+
+          # 1. 获取所有索引
+          echo "📡 Fetching existing indexes..."
+          raw_response=$(call_api "GET" \
+            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes") || exit 1
+
+          # 2. 过滤出匹配前缀的索引名
+          matching_indexes=$(echo "$raw_response" | \
+            jq -r --arg prefix "$INDEX_PREFIX" '.result[]? | select(.name | startswith($prefix)) | .name')
+
+          if [ -z "$matching_indexes" ]; then
+            echo "✅ No indexes found with prefix '$INDEX_PREFIX', nothing to delete."
+            exit 0
+          fi
+
+          echo "🗂️ Found indexes to delete:"
+          echo "$matching_indexes"
+          echo "------------------------------------------"
+
+          # 3. 逐个删除
+          deleted=0
+          failed=0
+
+          while IFS= read -r INDEX_NAME; do
+            echo "🗑️  Deleting $INDEX_NAME..."
+
+            res=$(call_api "DELETE" \
+              "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes/$INDEX_NAME") || {
+              echo "❌ Failed to delete $INDEX_NAME"
+              failed=$((failed + 1))
+              continue
+            }
+
+            success=$(echo "$res" | jq -r '.success')
+
+            if [ "$success" == "true" ]; then
+              echo "✅ Deleted $INDEX_NAME"
+              deleted=$((deleted + 1))
+            else
+              error_code=$(echo "$res" | jq -r '.errors[0].code // empty')
+              error_msg=$(echo "$res" | jq -r '.errors[0].message // empty')
+
+              if [[ "$error_code" == "3000" ]] || [[ "$error_msg" == *"not found"* ]]; then
+                echo "⚠️  $INDEX_NAME not found, skipping."
+              else
+                echo "❌ Failed to delete $INDEX_NAME: $res"
+                failed=$((failed + 1))
+              fi
+            fi
+
+            sleep 1
+          done <<< "$matching_indexes"
+
+          echo "=========================================="
+          echo "✅ Deleted: $deleted"
+          [ "$failed" -gt 0 ] && echo "❌ Failed:  $failed" && exit 1
+          echo "🎉 All matching indexes deleted successfully."

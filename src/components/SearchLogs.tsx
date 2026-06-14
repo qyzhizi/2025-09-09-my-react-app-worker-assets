@@ -8,7 +8,9 @@ import { useSearchParams } from "@/RouterLite";
 type SearchCommitItem = {
   id: string;
   score: number;
-  metadata: { title: string };
+  metadata: {
+    repoAndVaultPath: string; title: string 
+};
   source?: "search" | "recent";
 };
 
@@ -25,8 +27,6 @@ const SearchLogs = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [githubUserName, setGithubUserName] = useState<string>("");
-  const [githubRepoName, setGithubRepoName] = useState<string>("");
-  const [vaultPathInRepo, setVaultPathInRepo] = useState<string>("");
   const [vaultName, setVaultName] = useState<string>("");
 
   const { q = "", t = "" } = useSearchParams(); // ?q= & ?t=
@@ -64,8 +64,6 @@ const SearchLogs = () => {
         const data = (await response.json()) as SearchResponse;
         setCommits(data.similarTitles ?? []);
         setGithubUserName(data.githubUserName);
-        setGithubRepoName(data.githubRepoName);
-        setVaultPathInRepo(data.vaultPathInRepo);
         setVaultName(data.vaultName);
       } catch (err) {
         console.error("Failed to fetch search results:", err);
@@ -117,36 +115,39 @@ const SearchLogs = () => {
 
       {!loading && !error && sortedCommits.length > 0 && (
         <div className="w-full flex flex-col gap-2 mt-2">
-          {sortedCommits.map((item) => (
-            <div
-              key={item.id}
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-900"
-            >
-              <div className="flex items-center justify-between mb-1 gap-2">
-                <span className="text-xs text-gray-400 dark:text-gray-500 truncate font-medium">
-                  {item.metadata.title}
-                </span>
-                <span className="text-xs text-blue-500 dark:text-blue-400 font-semibold">
-                  {(item.score * 100).toFixed(1)}%
-                </span>
-              </div>
-              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                ID: {item.id}
-              </div>
-              {githubUserName && githubRepoName && (
-                <div className="mt-2">
-                  <a
-                    href={`https://github.com/${githubUserName}/${githubRepoName}/blob/main/${vaultPathInRepo}/${vaultName}/${item.id.slice(0, 2)}/${item.id.slice(2, 4)}/${item.id.slice(4)}.md`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
-                  >
-                    {vaultPathInRepo}/{vaultName}/{item.id.slice(0, 2)}/{item.id.slice(2, 4)}/{item.id.slice(4)}.md
-                  </a>
+          {sortedCommits.map((item) => {
+            const [repoPart = "", vaultPathPart = ""] = (item.metadata.repoAndVaultPath || "").split("-");
+            return (
+              <div
+                key={item.id}
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-900"
+              >
+                <div className="flex items-center justify-between mb-1 gap-2">
+                  <span className="text-xs text-gray-400 dark:text-gray-500 truncate font-medium">
+                    {item.metadata.title}
+                  </span>
+                  <span className="text-xs text-blue-500 dark:text-blue-400 font-semibold">
+                    {(item.score * 100).toFixed(1)}%
+                  </span>
                 </div>
-              )}
-            </div>
-          ))}
+                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  ID: {item.id}
+                </div>
+                {githubUserName && (
+                  <div className="mt-2">
+                    <a
+                      href={`https://github.com/${githubUserName}/${repoPart}/blob/main/${vaultPathPart}/${vaultName}/${item.id.slice(0, 2)}/${item.id.slice(2, 4)}/${item.id.slice(4)}.md`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
+                    >
+                      https://github.com/{githubUserName}/{repoPart}/blob/main/{vaultPathPart}/{vaultName}/{item.id.slice(0, 2)}/{item.id.slice(2, 4)}/{item.id.slice(4)}.md
+                    </a>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

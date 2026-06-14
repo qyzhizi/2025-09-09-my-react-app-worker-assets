@@ -68,8 +68,13 @@ jobs:
               if [ "$http_code" -ge 500 ] || [ "$http_code" -eq 429 ]; then
                 echo "⚠️ HTTP $http_code, retrying in ${wait}s..." >&2
               elif [ "$http_code" -ge 400 ]; then
-                echo "❌ HTTP $http_code error: $body" >&2
-                return 1
+                # 410 可能是索引还未就绪，加入重试
+                if [ "$http_code" -eq 410 ]; then
+                  echo "⚠️ HTTP 410 (index not ready yet), retrying in ${wait}s..." >&2
+                else
+                  echo "❌ HTTP $http_code error: $body" >&2
+                  # return 1
+                fi
               else
                 # JSON 校验
                 if echo "$body" | jq . >/dev/null 2>&1; then
@@ -109,7 +114,7 @@ jobs:
               create_data=$(jq -n \
                 --arg name "$INDEX_NAME" \
                 '{
-                  config: { dimensions: 1024, metric: "cosine" },
+                  config: { dimensions: 768, metric: "cosine" },
                   name: $name,
                   description: "Auto-created by GitHub Actions"
                 }'
@@ -148,12 +153,12 @@ jobs:
               "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes/$INDEX_NAME/metadata_index/list") || exit 1
 
             is_indexed=$(echo "$meta_list_res" | \
-              jq -r '.result.metadataIndexes // [] | .[] | select(.propertyName == "repoName") | .propertyName')
+              jq -r '.result.metadataIndexes // [] | .[] | select(.propertyName == "repoAndVaultPath") | .propertyName')
 
             if [ -z "$is_indexed" ]; then
-              echo "➕ Creating repoName metadata index..."
+              echo "➕ Creating repoAndVaultPath metadata index..."
 
-              meta_data='{"indexType":"string","propertyName":"repoName"}'
+              meta_data='{"indexType":"string","propertyName":"repoAndVaultPath"}'
 
               meta_create_res=$(call_api "POST" \
                 "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/vectorize/v2/indexes/$INDEX_NAME/metadata_index/create" \
