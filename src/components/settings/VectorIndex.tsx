@@ -547,6 +547,7 @@ function StatsCard() {
 }
 
 // ── Helper to update collection optimizers threshold for Qdrant ── 
+// 关闭 Qdrant 的 index 阈值，在 vector 插入完毕后再打开，可以加速 vector 的插入。
 async function updateCollectionOptimizersThreshold(indexing_threshold: number) {
   const res = await fetch('/api/update-collection-optimizers', {
     method: 'POST',
