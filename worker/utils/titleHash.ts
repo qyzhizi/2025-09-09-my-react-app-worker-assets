@@ -89,7 +89,8 @@ export function hex16ToUuid(hex16: string): string {
     throw new Error("必须是16位十六进制字符串");
   }
 
-  return hex16.toLowerCase() + UUID_PADDING;
+  const compact = hex16.toLowerCase() + UUID_PADDING;
+  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
 }
 
 /**

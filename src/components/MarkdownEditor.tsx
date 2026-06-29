@@ -16,11 +16,17 @@ interface EditorProps {
 }
 
 const MarkdownEditor: React.FC<EditorProps> = ({
-  containerId = "editor-container",
+  containerId,
   value,
   onChange,
 }) => {
   const editorRef = useRef<any>(null);
+  // Ensure each editor instance mounts into a unique container id when none provided
+  const mountIdRef = useRef<string>(
+    containerId ?? `editor-container-${Math.random().toString(36).slice(2, 9)}`
+  );
+
+  const mountId = mountIdRef.current;
 
   useEffect(() => {
     // Image upload plugin
@@ -49,7 +55,7 @@ const MarkdownEditor: React.FC<EditorProps> = ({
     })
       .use(imageUploadPlugin)
       .use(markdownPreviewPlugin)
-      .mount(containerId);
+      .mount(mountId);
 
     editorRef.current = editor;
 
@@ -64,7 +70,7 @@ const MarkdownEditor: React.FC<EditorProps> = ({
         editorRef.current.destroy();
       }
     };
-  }, [containerId]);
+  }, [mountId]);
 
   // Controlled update: when value changes, manually update the editor
   useEffect(() => {
@@ -73,7 +79,7 @@ const MarkdownEditor: React.FC<EditorProps> = ({
     }
   }, [value]);
 
-  return <div id={containerId} className="w-full" />;
+  return <div id={mountId} className="w-full" />;
 };
 
 export default MarkdownEditor;

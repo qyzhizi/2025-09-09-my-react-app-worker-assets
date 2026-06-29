@@ -12,6 +12,14 @@ export interface GithubRepoAccess {
   vaultName: string;
 }
 
+export interface ValidatedGithubAccess {
+  githubUserName: string;
+  githubRepoName: string;
+  vaultName: string;
+  vaultPathInRepo: string;
+  accessToken: string;
+}
+
 export interface CreateGithubRepoAccess {
   id: string;
   userId: string;

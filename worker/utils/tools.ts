@@ -2,37 +2,37 @@ import { sign } from 'hono/jwt'
 import { ValidationError } from '@/types/error';
 
 // Add validation function
-function matchGitRepoName(repoName: string): boolean {
+function matchGitRepoName(githubRepoName: string): boolean {
   const pattern = /^[a-zA-Z0-9_.-]+$/
 
-  return pattern.test(repoName);
+  return pattern.test(githubRepoName);
 }
 
-function matchGitRepoFullName(repoName: string): boolean {
+function matchGitRepoFullName(githubRepoName: string): boolean {
   const pattern = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/
 
-  return pattern.test(repoName);
+  return pattern.test(githubRepoName);
 }
 
-export function validateGitRepoFullName(repoName: string): void {
+export function validateGitRepoFullName(githubRepoName: string): void {
   // Check if the file path is empty
-  if (!repoName) {
+  if (!githubRepoName) {
     return;
   }
 
   // Check if the file name is legal
-  if (!matchGitRepoFullName(repoName)) {
+  if (!matchGitRepoFullName(githubRepoName)) {
     throw new ValidationError("github repo name Format error! Please check and try again");
   }
 }
-export function validateGitRepoName(repoName: string): void {
+export function validateGitRepoName(githubRepoName: string): void {
   // Check if the file path is empty
-  if (!repoName) {
+  if (!githubRepoName) {
     return;
   }
 
   // Check if the file name is legal
-  if (!matchGitRepoName(repoName)) {
+  if (!matchGitRepoName(githubRepoName)) {
     throw new ValidationError("github repo name Format error! Please check and try again");
   }
 }
@@ -89,7 +89,6 @@ export function getMetaDataFromContent(content: string): { title: string; date: 
     }
   }
 
-  console.log('Extracted title and date:', { title, date });
   return { title, date };
 }
 

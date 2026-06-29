@@ -37,7 +37,7 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
       return c.json({ error: 'Invalid vaultPathInRepo format. Only alphanumeric characters, hyphens, underscores, dots, and slashes are allowed.' }, 400);
     }
     
-    // verify repoName
+    // verify githubRepoName
     try {
       validateGitRepoFullName(githubRepoFullName);
     } catch (error) {
@@ -84,7 +84,7 @@ export async function saveRepoAndTestConnectionHandler(c: Context<{ Bindings: En
     let durableIsReset = false
     if (normalizedVaultPathInRepo !== dbVaultPathInRepo || githubRepoName !== dbGithubRepoName) {
       // console.warn("vaultPathInRepo or githubRepoName is different from DB!")
-      // reset durable object storage and sqlite to avoid potential issue caused by inconsistent repoName or vaultPathInRepo
+      // reset durable object storage and sqlite to avoid potential issue caused by inconsistent githubRepoName or vaultPathInRepo
       await duableSwitchAndInitVault(
         c,
         {
@@ -261,7 +261,7 @@ export async function checkIfTitlesExistsOnGitHubVaultHandler(c:Context<{ Bindin
     {
       accessToken: githubAccessInfo.accessToken,
       githubUserName: githubAccessInfo.githubUserName,
-      repoName: githubAccessInfo.githubRepoName,
+      githubRepoName: githubAccessInfo.githubRepoName,
       dbBranch: dbBranch,
       filePaths: filePaths
     }

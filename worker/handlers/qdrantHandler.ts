@@ -102,7 +102,7 @@ export async function UpsertCollectionPointsHandler(c: Context<{ Bindings: Env, 
         headers: {
           ...(incomingContentType ? { 'Content-Type': incomingContentType } : {}),
           'x-qdrant-api-key': qdrantSettings.qdrantApiKey,
-          'x-repoName': githubRepoName,
+          'x-githubRepoName': githubRepoName,
           'x-vaultPathInRepo': vaultPathInRepo,
         },
         body: c.req.raw.body,

@@ -10,7 +10,7 @@ import { respondError } from "@/types/error"
 import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService'
 import {durableHello,
   durableCreateTaskAndSaveArticleToDB,
-  durablePushToGitHub,
+  durableProcessTask,
   getDODatabaseStatus,
   resetDoKeyStorageAndSqlite,
   getArticleContentList,
@@ -25,12 +25,12 @@ import {getVaultInfo} from '@/infrastructure/githubRepoAccess'
 import { safeUpdategithubRepoAccessByUserId,
   getgithubRepoAccessInfo, 
 } from "@/infrastructure/githubRepoAccess"
-import type { PushGitRepoTaskParams } from "@/types/durable";
+import type { PushGitRepoTaskParams, DeleteArticleTaskParams, EditGitRepoTaskParams} from "@/types/durable";
 import { Provider } from "@/types/provider";
 import { getMetaDataFromContent } from "@/utils/tools"
-import { NotGetAccessTokenError } from "@/types/error"
+import { TokenExpiredError, NotFoundError } from "@/types/error"
 import {getOrUpdategithubRepoAccessInfo} from "@/providers"
-import {type GithubRepoAccess} from "@/infrastructure/types";
+import {type GithubRepoAccess, type ValidatedGithubAccess} from "@/infrastructure/types";
 import { edgeHash64 } from "@/utils/titleHash"
 import { isVectorIndexProvider } from "@/types/durable";
 
@@ -166,6 +166,40 @@ export const getAuthInfoHandler = async (c: Context<{
   })
 }
 
+// Helper: ensure and validate GitHub access info for handlers
+export async function getValidatedGithubAccessInfo(c: Context): Promise<GithubRepoAccess | Response> {
+  let githubAccessInfo: GithubRepoAccess | null;
+  try {
+    githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
+  } catch (err: any) {
+    if (err instanceof TokenExpiredError) {
+      return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401);
+    }
+    console.error('Error getting GitHub access info:', err);
+    return c.json({ Error: 'Fail to get or update accessToken, Please auth GitHub APP first!' }, 401);
+  }
+
+  if (!githubAccessInfo || !githubAccessInfo.accessToken) {
+    console.error('Fail to get or update accessToken, Please auth GitHub APP first!');
+    return c.json({ Error: 'Fail to get or update accessToken, Please auth GitHub APP first!' }, 401);
+  }
+
+  if (!githubAccessInfo.githubRepoName) {
+    return c.json({ error: 'Incomplete GitHub access record, githubRepoName is not exist' }, 401);
+  }
+
+  if (!githubAccessInfo.githubUserName) {
+    return c.json({ error: 'Incomplete GitHub access record, githubUserName is not exist' }, 401);
+  }
+
+  const vaultPathInRepo = githubAccessInfo.vaultPathInRepo;
+  if (!vaultPathInRepo || vaultPathInRepo.trim() === '') {
+    return c.json({ error: 'Empty vaultPathInRepo in githubAccessInfo' }, 400);
+  }
+
+  return githubAccessInfo;
+}
+
 /**
  * GitHub authorization callback routing processing function
  * This function extracts the code from the request, then calls fetchAccessToken to obtain the token, and redirects to the front-end settings page
@@ -290,64 +324,44 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
       console.error("Date is required in content")
       return c.json({ error: "Date is required in content" }, 404);
     }
-    let title = extractedTitle
-    if (!title) {
-      title = extractedDate
-    }
-    const taskId = edgeHash64(title)
+    const hash =  extractedTitle ? edgeHash64(extractedTitle) : edgeHash64(extractedDate)
 
     const logEntry = {
       message: "[NEW] by memoflow",
       content,
+      hash,
       created_at: extractedDate,
-      taskId: taskId,
-      title: title,
+      taskId: hash,
+      title: extractedTitle,
     }
 
-    let githubAccessInfo: GithubRepoAccess | null;
-    try {
-      githubAccessInfo = await getOrUpdategithubRepoAccessInfo(c);
-    } catch (TokenExpiredError) {
-      return c.json({ TokenExpiredError: 'GitHub access token and refresh token have expired, Please re-authenticate GitHub APP' }, 401);
+    const _gh = await getValidatedGithubAccessInfo(c);
+    if (!('accessToken' in _gh)) {
+      return _gh as Response;
     }
-    if (!githubAccessInfo || !githubAccessInfo.accessToken){
-      throw new NotGetAccessTokenError("Fail to get or update accessToken, Please auth GitHub APP first!");
-    }
-
-    // First check if githubAccessInfo exists
-    if (!githubAccessInfo) {
-      return c.json({ error: "GitHub app access record not found" }, 404);
-    }
-    if (!githubAccessInfo.githubRepoName){
-      return c.json({ error: "githubRepoName is not exist" }, 400);
-    }
-    if (!githubAccessInfo.accessToken || !githubAccessInfo.githubUserName || !githubAccessInfo.githubRepoName) {
-      return c.json({ error: "Incomplete GitHub access record" }, 400);
-    }
+    const githubAccessInfo = _gh as ValidatedGithubAccess;
     // get vaultName
     const vaultPathInRepo = githubAccessInfo.vaultPathInRepo;
     const vaultName = githubAccessInfo.vaultName;
-    if (!vaultPathInRepo || vaultPathInRepo.trim() === '') {
-      return c.json({ error: 'Empty vaultPathInRepo in githubAccessInfo' }, 400);
-    }
 
     const taskParams: Partial<PushGitRepoTaskParams> = {
       id: logEntry.taskId,
+      title: logEntry.title,
+      content: logEntry.content,
+      hash: logEntry.hash,
       commitMessage: logEntry.message,
       accessToken: githubAccessInfo.accessToken,
       githubUserName: githubAccessInfo.githubUserName,
-      repoName: githubAccessInfo.githubRepoName,
+      githubRepoName: githubAccessInfo.githubRepoName,
       vaultPathInRepo: vaultPathInRepo,
       vaultName: vaultName,
-      title: logEntry.title,
-      content: logEntry.content,
       completed: false,
       createdAt: logEntry.created_at,
     }
     await durableCreateTaskAndSaveArticleToDB(c, taskParams)
     
     try {
-      const result = await durablePushToGitHub(c, taskId);
+      const result = await durableProcessTask(c, logEntry.taskId);
       return c.json(result);
     } catch (error) {
       console.error("Error in fetchMemoflowTaskHandler:", error);
@@ -355,6 +369,137 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
     }
   } catch (err) {
     console.error('Error in addLogHandler:', err)
+    return c.json({ error: 'Internal Server Error' }, 500)
+  }
+}
+
+export async function deleteLogHandler(c: Context<{Bindings: Env, Variables: {userId: string, userName: string}}>): Promise<Response> {
+  try {
+    // Prefer path param `id`, fall back to body.id if not present
+    const idFromParam = c.req.param('id')
+    let id = idFromParam
+    if (!id) {
+      try {
+        const body = await c.req.json()
+        id = body?.id
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (!id || typeof id !== 'string') {
+      return c.json({ error: 'Missing id' }, 400)
+    }
+    const _gh = await getValidatedGithubAccessInfo(c);
+    if (!('accessToken' in _gh)) {
+      return _gh as Response;
+    }
+    const githubAccessInfo = _gh as ValidatedGithubAccess;
+    const deleteArticleTaskParams: DeleteArticleTaskParams = {
+      userId: c.get("userId"),
+      articleId: id,
+      commitMessage: "[delete] by memoflow",
+      accessToken: githubAccessInfo.accessToken,
+      githubUserName: githubAccessInfo.githubUserName,
+      githubRepoName: githubAccessInfo.githubRepoName,
+      vaultPathInRepo: githubAccessInfo.vaultPathInRepo,
+      vaultName: githubAccessInfo.vaultName
+    }
+    
+    const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+        `${DURABLE_NAME_PREFIX}${c.get("userId")}`)
+    const stub = c.env.MY_DURABLE_OBJECT.get(doId)
+    await (stub as any).deleteArticleContent(deleteArticleTaskParams.articleId)
+    c.executionCtx.waitUntil(
+      (stub as any).processDeleteArticle(deleteArticleTaskParams)
+      .catch((err: any) => {
+            // Note: The errors here will no longer be passed to the user request and can only be recorded by yourself.
+            console.error("Background DO task failed:", err);
+      })
+    )
+
+    return c.json({ ok: true })
+  } catch (err: any) {
+    console.error('Error in deleteLogHandler:', err)
+    if (err instanceof NotFoundError) {
+      return c.json({ error: err.message }, 404)
+    }
+    return c.json({ error: 'Internal Server Error' }, 500)
+  }
+}
+
+export async function editLogHandler(c: Context<{ Bindings: Env, Variables: { userId: string, userName: string} }>): Promise<Response> {
+  try {
+    const body = await c.req.json().catch(() => ({} as Record<string, any>))
+    const idFromParam = c.req.param('id')
+    const originalId = typeof idFromParam === 'string' && idFromParam ? idFromParam : body?.id
+
+    if (!originalId || typeof originalId !== 'string') {
+      return c.json({ error: 'Missing id' }, 400)
+    }
+
+    const content = body?.content
+    if (!content || typeof content !== 'string' || content.trim() === '') {
+      return c.json({ error: 'Content is required' }, 400)
+    }
+
+    // const now = new Date().toISOString()
+    const { title: extractedTitle, date: extractedDate } = getMetaDataFromContent(content)
+    if (!extractedDate){
+      console.error("Date is required in content")
+      return c.json({ error: "Date is required in content" }, 404);
+    }
+    const hash =  extractedTitle ? edgeHash64(extractedTitle) : edgeHash64(extractedDate)
+
+    const logEntry = {
+      message: "[new] by memoflow",
+      content,
+      created_at: extractedDate,
+      taskId: hash,
+      hash,
+      title: extractedTitle,
+    } 
+
+    const _gh = await getValidatedGithubAccessInfo(c);
+    if (!('accessToken' in _gh)) {
+      return _gh as Response;
+    }
+    const githubAccessInfo = _gh as ValidatedGithubAccess;
+
+    // const doId = c.env.MY_DURABLE_OBJECT.idFromName(
+    //   `${DURABLE_NAME_PREFIX}${c.get("userId")}`
+    // )
+    // const stub = c.env.MY_DURABLE_OBJECT.get(doId) as any;
+
+    const taskParams: Partial<EditGitRepoTaskParams> = {
+      originalId,
+      id: logEntry.taskId,
+      title: logEntry.title,
+      content: logEntry.content,
+      hash: logEntry.hash,
+      commitMessage: logEntry.message, // edit also use [NEW]
+      accessToken: githubAccessInfo.accessToken,
+      githubUserName: githubAccessInfo.githubUserName,
+      githubRepoName: githubAccessInfo.githubRepoName,
+      vaultPathInRepo: githubAccessInfo.vaultPathInRepo,
+      vaultName: githubAccessInfo.vaultName,
+      completed: false,
+      createdAt: logEntry.created_at,
+    }
+
+    await durableCreateTaskAndSaveArticleToDB(c, taskParams)
+    try {
+      const result = await durableProcessTask(c, logEntry.taskId);
+      return c.json(result);
+    } catch (error) {
+      console.error("Error in fetchMemoflowTaskHandler:", error);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  } catch (err: any) {
+    console.error('Error in editLogHandler:', err)
+    // if (err instanceof NotFoundError) {
+    //   return c.json({ error: err.message }, 404)
+    // }
     return c.json({ error: 'Internal Server Error' }, 500)
   }
 }
@@ -499,11 +644,11 @@ export async function durableSearchSimilarTitlesInVectorIndexHandler(c: Context<
         }
 
         // Search for similar titles in vector index
-        const repoName = githubAccessInfo?.githubRepoName ?? ''
+        const githubRepoName = githubAccessInfo?.githubRepoName ?? ''
         const vaultPathInRepo = githubAccessInfo?.vaultPathInRepo ?? ''
         const similarTitles = await durableSearchSimilarTitlesInVectorIndex(
-          c, { query, topK, repoAndVaultPath: currentRepoSearch ? `${repoName}-${vaultPathInRepo}` : undefined })
-        console.log('similarTitles from durableSearchSimilarTitlesInVectorIndex:', similarTitles)
+          c, { query, topK, repoAndVaultPath: currentRepoSearch ? `${githubRepoName}-${vaultPathInRepo}` : undefined })
+        // console.log('similarTitles from durableSearchSimilarTitlesInVectorIndex:', similarTitles)
         
         // Validate similarTitles response
         if (!similarTitles) {

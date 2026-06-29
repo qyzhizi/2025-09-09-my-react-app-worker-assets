@@ -485,7 +485,9 @@ export class SqliteRepository {
         );
 
         if (result.changes === 0) {
-            throw new NotFoundError(`Article content with id=${id} not found`);
+            // just warn not error
+            console.warn(`Article content with id=${id} not found`)
+            return
         }
 
         // Update count table

@@ -1,5 +1,4 @@
 import type { Context } from "hono";
-import type { PushGitRepoTaskParams } from "@/types/durable";
 import { NotFoundError, ValidationError } from "@/types/error"
 import { COMMITFILTER, PER_PAGE, DURABLE_NAME_PREFIX } from "@/ConstVar";
 
@@ -26,7 +25,7 @@ export const durableHello = async (c: Context) => {
 }
 
 export const durableCreateTaskAndSaveArticleToDB = async (c: Context,
-    taskParams: Partial<PushGitRepoTaskParams>) => {
+    taskParams: any) => {
     const durableObjectName = `${DURABLE_NAME_PREFIX}${c.get("userId")}`;
     const doId = c.env.MY_DURABLE_OBJECT.idFromName(durableObjectName)
     const stub = c.env.MY_DURABLE_OBJECT.get(doId)
@@ -48,7 +47,7 @@ export const durableCreateTaskAndSaveArticleToDB = async (c: Context,
     }
 }
 
-export const durablePushToGitHub = async (c: Context,
+export const durableProcessTask = async (c: Context,
     taskId: string) => {
     const doId = c.env.MY_DURABLE_OBJECT.idFromName(
         `${DURABLE_NAME_PREFIX}${c.get("userId")}`);
@@ -56,7 +55,7 @@ export const durablePushToGitHub = async (c: Context,
     
     // Offload time-consuming tasks to DO without blocking HTTP responses
     c.executionCtx.waitUntil(
-        stub.processGithubPushTask(taskId, c.get("userId"))
+        stub.processTask(taskId, c.get("userId"))
         .catch((err: any) => {
             // Note: The errors here will no longer be passed to the user request and can only be recorded by yourself.
             console.error("Background DO task failed:", err);
@@ -134,7 +133,7 @@ export const durableInitQdrantCollectionForUser = async (c: Context,
     }
 
     const indexParam: CreatePayloadIndexParam = {
-        field_name: "repoAndVaultPath", // 这个字段会存储 repoName 和 vaultPath 的组合作为标识
+        field_name: "repoAndVaultPath", // 这个字段会存储 githubRepoName 和 vaultPath 的组合作为标识
         field_schema: {
             type: "keyword",
             on_disk: false,

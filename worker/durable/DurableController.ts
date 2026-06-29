@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { NotFoundError, ValidationError } from "@/types/error"
-import type { Task, PushGitRepoTaskParams, PushGitRepoTaskRespon } from "@/types/durable";
+import type { Task, PushGitRepoTaskParams, PushGitRepoTaskRespon, EditGitRepoTaskParams } from "@/types/durable";
 import { SqliteRepository } from "@/durable/repository";
 
 import {batchGetFileContents, checkFilesExistInRepo} from "@/durable/github/githubGetContent";
@@ -17,8 +17,10 @@ import type { CreatePayloadIndexParam } from '@/durable/qdrant/payloadIndex';
 import type { QdrantSettings } from "@/utils/qdrant";
 
 import { upsertCollectionPoints, type UpsertPointsParam } from "@/durable/qdrant/upsertPoints";
+import { deleteCollectionPoints } from "@/durable/qdrant/deletePoints"
 import { queryCollectionPoints, type QueryPointsParam } from "@/durable/qdrant/queryPoints";
 import {VECTORINDEXTYPE} from "@/types/durable";
+import type { DeleteArticleTaskParams} from "@/types/durable";
 
 const MAX_ARTICLES_TO_STORE = 1000;
 const SEARCH_COMMITS_THRESHOLD = 100;
@@ -89,40 +91,32 @@ export class MyDurableObject extends DurableObject<Env> {
         return `Hello, ${name}!  this message from DurableObject`;
     }
 
-    private isTaskPayload(data: any): data is Partial<Task> {
-        // Your verification logic, such as checking the commitMessage/content type
-        return (
-          typeof data === 'object' &&
-          (data.id === undefined || typeof data.id === 'string') &&
-          (data.commitMessage === undefined || typeof data.commitMessage === 'string') &&
-          (data.content === undefined || typeof data.content === 'string') &&
-          (data.completed === undefined || typeof data.completed === 'boolean')
-        )
-      }
-
-    async createTaskAndSaveArticleToDB(data: PushGitRepoTaskParams): Promise<PushGitRepoTaskParams> {
-        if (!this.isTaskPayload(data)) {
-            throw new ValidationError('Type Check Error: Invalid payload');
-        }
+    async createTaskAndSaveArticleToDB(data: any): Promise<any> {
         if (!data.createdAt) {
             throw new ValidationError('Type Check Error: createdAt is required');
         }
 
-        const params: PushGitRepoTaskParams = {
+        const params = {
+            originalId: data.originalId ?? null,
             id: data.id ,
+            title: data.title ?? '',
+            content: data.content ?? '',
+            hash: data.hash,
             commitMessage: data.commitMessage ?? '',
             accessToken: data.accessToken ?? '',
             githubUserName: data.githubUserName ?? '',
-            repoName: data.repoName ?? '',
+            githubRepoName: data.githubRepoName ?? '',
             vaultPathInRepo: data.vaultPathInRepo ?? '',
             vaultName: data.vaultName ?? '',
-            title: data.title ?? '',
-            content: data.content ?? '',
             completed: false,
             createdAt: data.createdAt,
         };
 
         await this.state.storage.put(data.id, params);
+        // process edit article ,when article title hash(id) was changed
+        if (params.originalId && params.originalId !== params.id){
+            await this.deleteArticleContent(params.originalId)
+        }
         // save content to DO SQL for later query and analysis
         await this.saveContentToDOSql(
             params.id,
@@ -158,21 +152,66 @@ export class MyDurableObject extends DurableObject<Env> {
 
     }
 
-    async processGithubPushTask(taskId: string, userId: string): Promise<PushGitRepoTaskRespon> {
+    async processTask(taskId: string, userId: string): Promise<PushGitRepoTaskRespon> {
         /** Use Promise chain to serialize all GitHub pushes, avoiding concurrent submissions on the same branch leading to 409.
          * Principle: GitHub Contents API creates a new commit for each PUT,
          * If two PUTs are concurrently based on the same HEAD commit, the later one will result in 409.
          * Even if different files are written, conflicts can still occur because conflicts happen at the Git branch level, not the file level.
          */
         const promise = this.githubPushQueue.then(() =>
-            this._doProcessGithubPushTask(taskId, userId)
+            this._processGithubTask(taskId, userId)
         );
         //Regardless of success or failure, update the end of the queue (use catch to prevent chain breaks)
         this.githubPushQueue = promise.catch(() => {});
         return promise;
     }
 
-    private async upsertEmbeddingToCloudflareVectorIndex(title: string, titleHash: string, embedding: any, userId: string, repoName: string, vaultPathInRepo: string) {
+    async processDeleteArticle(deleteArticleTaskParams:DeleteArticleTaskParams): Promise<any> {
+        const vaultPathInRepo = deleteArticleTaskParams.vaultPathInRepo
+        const vaultName = deleteArticleTaskParams.vaultName
+        const articleId = deleteArticleTaskParams.articleId
+        const commitMessage = deleteArticleTaskParams.commitMessage
+        const userId = deleteArticleTaskParams.userId
+        
+        const filePath = `${vaultPathInRepo}/${vaultName}/${articleId.slice(0,2)}/${articleId.slice(2,4)}/${articleId.slice(4)}.md`
+
+        const vectorIndexProvider = this.sqliteRepository.getKvMeta("vectorIndexProvider") as string | undefined;        
+
+        const promise = this.githubPushQueue.then(() =>
+            this._deleteFileFromGitHub({
+                accessToken: deleteArticleTaskParams.accessToken,
+                githubUserName: deleteArticleTaskParams.githubUserName,
+                githubRepoName: deleteArticleTaskParams.githubRepoName,
+                filePath: filePath,
+                commitMessage
+            })
+        );        
+        this.githubPushQueue = promise.catch(() => {});
+        
+
+        // delete vector in vector index
+        // Get Qdrant settings from KvMeta
+        if (vectorIndexProvider === VECTORINDEXTYPE.QDRANT) {
+            const qdrantSettings = await this.getQdrantSettingsFromKvMeta();
+            if (!qdrantSettings) {
+                console.warn("Qdrant settings not found in KvMeta, skipping embedding upsert to Qdrant");
+                throw new Error("Qdrant settings not found in KvMeta");
+            }        
+            await deleteCollectionPoints(
+                    qdrantSettings.qdrantUrl,
+                    qdrantSettings.collectionName,
+                    qdrantSettings.qdrantApiKey,            
+                    {
+                        points: [hex16ToUuid(articleId)]
+                    }
+            )
+        } else if (vectorIndexProvider === VECTORINDEXTYPE.CLOUDFLARE) {
+            await this.deleteEmbeddingFromCloudflareVectorIndex(articleId, userId)
+        }
+
+    }
+
+    private async upsertEmbeddingToCloudflareVectorIndex(title: string, titleHash: string, embedding: any, userId: string, githubRepoName: string, vaultPathInRepo: string) {
         // Get vector index number using mapUuidQuick (maps to 0-9) to distribute load
         const indexNumber = mapUuidQuick(userId, 10);
         const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
@@ -184,7 +223,7 @@ export class MyDurableObject extends DurableObject<Env> {
                 {
                     id: titleHash,
                     values: embedding,
-                    metadata: { repoAndVaultPath: `${repoName}-${vaultPathInRepo}`, title },
+                    metadata: { repoAndVaultPath: `${githubRepoName}-${vaultPathInRepo}`, title },
                     namespace: userId,
                 },
             ];
@@ -233,7 +272,32 @@ export class MyDurableObject extends DurableObject<Env> {
         }
     }
 
-    private async upsertEmbeddingToQdrantVectorIndex(title: string, titleHash: string, embedding: any, repoName: string, vaultPathInRepo: string) {
+    private async deleteEmbeddingFromCloudflareVectorIndex(titleHash: string, userId: string): Promise<void> {
+        // Get vector index number using mapUuidQuick (maps to 0-9) to distribute load
+        const indexNumber = mapUuidQuick(userId, 10);
+        const vectorIndexKey = `${INDEX_NAME_PREFIX}${indexNumber}` as keyof Env;
+        const vectorIndex = this.env[vectorIndexKey] as VectorizeIndex;
+
+        if (!vectorIndex) {
+            console.warn(`Cloudflare vector index ${indexNumber} not found for userId: ${userId}`);
+            return;
+        }
+
+        try {
+            const existingVectors = await vectorIndex.getByIds([titleHash]);
+            const exists = Array.isArray(existingVectors) && existingVectors.some((v: any) => v?.id === titleHash);
+
+            await vectorIndex.deleteByIds([titleHash]);
+
+            if (exists) {
+                this.decrementCloudflareVectorCountsOfUserInKvMeta(1, userId);
+            }
+        } catch (error) {
+            console.error('Failed to delete embedding from Cloudflare vector index:', error);
+        }
+    }
+
+    private async upsertEmbeddingToQdrantVectorIndex(title: string, titleHash: string, embedding: any, githubRepoName: string, vaultPathInRepo: string) {
         // Get Qdrant settings from KvMeta
         const qdrantSettings = await this.getQdrantSettingsFromKvMeta();
         if (!qdrantSettings) {
@@ -244,7 +308,7 @@ export class MyDurableObject extends DurableObject<Env> {
             points: [{
                 id: hex16ToUuid(titleHash), // Use title hash as ID, converted to UUID format
                 vector: embedding,
-                payload: {repoAndVaultPath: `${repoName}-${vaultPathInRepo}`, title}
+                payload: {repoAndVaultPath: `${githubRepoName}-${vaultPathInRepo}`, title}
             }]
         }   
         try {        
@@ -261,30 +325,22 @@ export class MyDurableObject extends DurableObject<Env> {
         }      
     }
 
-    private async _doProcessGithubPushTask(taskId: string, userId: string): Promise<PushGitRepoTaskRespon> {
-        const taskParams = await this.state.storage.get<PushGitRepoTaskParams>(taskId);
-        if (!taskParams) {
-            throw new NotFoundError(`Task with taskId=${taskId} not found`);
-        }
-        // get vectorIndexType from KvMeta, default to VECTORINDEXTYPE.CLOUDFLARE if not set
-        const vectorIndexProvider = this.sqliteRepository.getKvMeta("vectorIndexProvider") as string | undefined;
-
-        const { commitMessage, accessToken, githubUserName, repoName, vaultPathInRepo, vaultName, title, content, completed } = taskParams;
+    private async _addArticleGtihubPushTask(taskId: string, userId: string, taskParams: PushGitRepoTaskParams, vectorIndexProvider: string|undefined): Promise<any>{
+        const { hash, title, content, commitMessage, accessToken, githubUserName, githubRepoName, vaultPathInRepo, vaultName, completed } = taskParams;
 
         if (completed) {
             return { "taskId": taskId, "completed": true };
         }
 
-        const titleHash = edgeHash64(title)
-        const filePath = `${vaultPathInRepo}/${vaultName}/${titleHash.slice(0,2)}/${titleHash.slice(2,4)}/${titleHash.slice(4)}.md`
+        const filePath = `${vaultPathInRepo}/${vaultName}/${hash.slice(0,2)}/${hash.slice(2,4)}/${hash.slice(4)}.md`
 
         await this.pushFileToGitHub({
             accessToken,
             githubUserName,
-            repoName,
+            githubRepoName,
             filePath: filePath,
             content,
-            commitMessage: `${commitMessage}:${titleHash}`,
+            commitMessage: `${commitMessage}:${hash}`,
             taskId,
         });
 
@@ -292,7 +348,7 @@ export class MyDurableObject extends DurableObject<Env> {
         await this.state.storage.delete(taskId);
         
         // Get title embedding and save to vector index
-        if (title && title.trim()) {
+        if (title) {
             try {
                 // Generate embedding for title using AI binding
                 const embeddings = await this.env.AI.run(EMBEDDING_MODEL as any, {
@@ -302,9 +358,9 @@ export class MyDurableObject extends DurableObject<Env> {
                 // Check if embeddings has data (not an async response)
                 if ('data' in embeddings && Array.isArray(embeddings.data) && embeddings.data.length > 0) {
                     if (vectorIndexProvider === VECTORINDEXTYPE.CLOUDFLARE) {
-                        this.upsertEmbeddingToCloudflareVectorIndex(title, titleHash, embeddings.data[0], userId, repoName, vaultPathInRepo);
+                        this.upsertEmbeddingToCloudflareVectorIndex(title, hash, embeddings.data[0], userId, githubRepoName, vaultPathInRepo);
                     } else if (vectorIndexProvider === VECTORINDEXTYPE.QDRANT) {
-                        await this.upsertEmbeddingToQdrantVectorIndex(title, titleHash, embeddings.data[0], repoName, vaultPathInRepo);
+                        await this.upsertEmbeddingToQdrantVectorIndex(title, hash, embeddings.data[0], githubRepoName, vaultPathInRepo);
                     }
                 } else {
                     console.warn('AI returned async response or no data, skipping embedding storage');
@@ -316,6 +372,47 @@ export class MyDurableObject extends DurableObject<Env> {
         }
 
         return { "taskId": taskId, "completed": true };
+    }
+
+    private async _editArticleGithubPushTask(taskId: string, userId: string, taskParams: EditGitRepoTaskParams){
+        const vectorIndexProvider = this.sqliteRepository.getKvMeta("vectorIndexProvider") as string | undefined;
+        const { id, originalId, accessToken, githubUserName, githubRepoName, vaultPathInRepo, vaultName, completed } = taskParams;                
+
+        if (completed) {
+            return { "taskId": taskId, "completed": true };
+        }        
+        if (id !== originalId){
+            // delete original article
+            await this.processDeleteArticle({
+                userId: userId,
+                articleId: originalId,
+                commitMessage: "[delete] by memoflow",
+                accessToken,
+                githubUserName,
+                githubRepoName,
+                vaultPathInRepo,
+                vaultName
+            })
+        }
+        return await this._addArticleGtihubPushTask(taskId, userId, taskParams, vectorIndexProvider)
+    }
+
+    private async _processGithubTask(taskId: string, userId: string): Promise<any> {
+        const taskParams = await this.state.storage.get<any>(taskId);
+        if (!taskParams) {
+            throw new NotFoundError(`Task with taskId=${taskId} not found`);
+        }
+        // get vectorIndexType from KvMeta, default to VECTORINDEXTYPE.CLOUDFLARE if not set
+        const vectorIndexProvider = this.sqliteRepository.getKvMeta("vectorIndexProvider") as string | undefined;        
+
+        const { originalId } = taskParams;
+        if(!originalId){
+            await this._addArticleGtihubPushTask(taskId, userId, taskParams, vectorIndexProvider)
+        }
+        if(originalId){
+            await this._editArticleGithubPushTask(taskId, userId, taskParams)
+        }
+
     }
 
     async fetch(request: Request): Promise<Response> {
@@ -334,7 +431,7 @@ export class MyDurableObject extends DurableObject<Env> {
             const qdrantUrl = url.searchParams.get('qdrantUrl') ?? url.searchParams.get('url') ?? request.headers.get('x-qdrant-url');
             const collectionName = url.searchParams.get('collectionName') ?? request.headers.get('x-qdrant-collection-name');
             const apiKey = url.searchParams.get('apiKey') ?? request.headers.get('x-qdrant-api-key');
-            const repoName = request.headers.get('x-repoName') ?? '';
+            const githubRepoName = request.headers.get('x-githubRepoName') ?? '';
             const vaultPathInRepo = request.headers.get('x-vaultPathInRepo') ?? '';
 
             // get body
@@ -345,7 +442,7 @@ export class MyDurableObject extends DurableObject<Env> {
                 points: (embeddings.data as number[][]).map((vector, idx) => ({
                     id: hex16ToUuid(edgeHash64(titles[idx])), // Use title hash as ID, converted to UUID format
                     vector,
-                    payload: {repoAndVaultPath: `${repoName}-${vaultPathInRepo}`, title: titles[idx] }
+                    payload: {repoAndVaultPath: `${githubRepoName}-${vaultPathInRepo}`, title: titles[idx] }
                 }))
             }
 
@@ -387,7 +484,7 @@ export class MyDurableObject extends DurableObject<Env> {
                     }
                 });
             }
-            const repoName = request.headers.get('x-repoName') ?? '';
+            const githubRepoName = request.headers.get('x-githubRepoName') ?? '';
             const vaultPathInRepo = request.headers.get('x-vaultPathInRepo') ?? 
             '';
             const userId = request.headers.get('x-userId') ?? '';
@@ -403,7 +500,7 @@ export class MyDurableObject extends DurableObject<Env> {
                 const vectors = (embeddings.data as number[][]).map((embedding, idx) => ({
                     id: edgeHash64(titles[idx]),
                     values: embedding,
-                    metadata: { repoAndVaultPath: `${repoName}-${vaultPathInRepo}`, title: titles[idx] },
+                    metadata: { repoAndVaultPath: `${githubRepoName}-${vaultPathInRepo}`, title: titles[idx] },
                     namespace: userId,
                 }));
                 await this.safeUpsertToCloudflareIndex(vectors, userId, vectorIndex);
@@ -608,14 +705,14 @@ export class MyDurableObject extends DurableObject<Env> {
     async checkIfFilesExistOnGitHub(params: {
         accessToken: string;
         githubUserName: string;
-        repoName: string;
+        githubRepoName: string;
         dbBranch: string;
         filePaths: string[];
     }): Promise< any> {
-        const { accessToken, githubUserName, repoName, dbBranch, filePaths } = params;
+        const { accessToken, githubUserName, githubRepoName, dbBranch, filePaths } = params;
         const result = await checkFilesExistInRepo({
             owner: githubUserName,
-            repo: repoName,
+            repo: githubRepoName,
             filePaths,
             branch: dbBranch,
             token: accessToken
@@ -631,14 +728,14 @@ export class MyDurableObject extends DurableObject<Env> {
     private async pushFileToGitHub(params: {
         accessToken: string;
         githubUserName: string;
-        repoName: string;
+        githubRepoName: string;
         filePath: string;
         content: string;
         commitMessage: string;
         taskId: string;
     }): Promise<void> {
-        const { accessToken, githubUserName, repoName, filePath, content, commitMessage, taskId } = params;
-        const fileUrl = `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${filePath}`;
+        const { accessToken, githubUserName, githubRepoName, filePath, content, commitMessage, taskId } = params;
+        const fileUrl = `https://api.github.com/repos/${githubUserName}/${githubRepoName}/contents/${filePath}`;
         const base64Content = Buffer.from(content, 'utf-8').toString('base64');
 
         const MAX_RETRIES = 3;
@@ -695,6 +792,73 @@ export class MyDurableObject extends DurableObject<Env> {
                 }
                 console.error('Task processing failed:', error, "taskId: ", taskId);
                 throw new Error(`Failed to process GitHub push: ${error}`);
+            }
+        }
+    }
+
+    private async _deleteFileFromGitHub(params: {
+        accessToken: string;
+        githubUserName: string;
+        githubRepoName: string;
+        filePath: string;
+        commitMessage: string;
+    }): Promise<void> {
+        const { accessToken, githubUserName, githubRepoName, filePath, commitMessage } = params;
+        const fileUrl = `https://api.github.com/repos/${githubUserName}/${githubRepoName}/contents/${filePath}`;
+
+        const MAX_RETRIES = 3;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                let fileSha: string | null = null;
+                const fileRes = await fetch(fileUrl, {
+                    method: 'GET',
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'User-Agent': 'Hono-Worker',
+                    },
+                });
+
+                if (fileRes.ok) {
+                    const fileData = (await fileRes.json()) as { sha: string };
+                    fileSha = fileData.sha;
+                } else if (fileRes.status === 404) {
+                    console.warn(`File not found during delete, treating as success.`, "filePath:", filePath);
+                    return;
+                } else {
+                    throw new Error(`Failed to fetch file metadata: ${fileRes.status} ${await fileRes.text()}`);
+                }
+
+                const githubRes = await fetch(fileUrl, {
+                    method: 'DELETE',
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'User-Agent': 'Hono-Worker',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: commitMessage,
+                        sha: fileSha,
+                    }),
+                });
+
+                if (githubRes.ok) {
+                    return;
+                }
+
+                if (githubRes.status === 409 && attempt < MAX_RETRIES - 1) {
+                    console.warn(`SHA conflict (409) on delete attempt ${attempt + 1}, retrying...`);
+                    await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+                    continue;
+                }
+
+                throw new Error(await githubRes.text());
+            } catch (error) {
+                if (attempt < MAX_RETRIES - 1 && error instanceof Error && error.message.includes('409')) {
+                    console.warn(`Retry ${attempt + 1}/${MAX_RETRIES} due to conflict on delete`);
+                    await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+                    continue;
+                }
+                throw new Error(`Failed to delete GitHub file: ${error}`);
             }
         }
     }

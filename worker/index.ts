@@ -12,6 +12,8 @@ import {
   getUserAvatarUrlHandler,
   durableHelloHandler,
   addLogHandler,
+  deleteLogHandler,
+  editLogHandler,
   getAuthInfoHandler,
   GithubLoginHandler,
   initRefreshTokenHandler,
@@ -86,6 +88,8 @@ app.get("/user/avatar-url", getUserAvatarUrlHandler);
 app.get("/user/info", getUserInfoHandler);
 
 app.post('/diary-log/addlog', addLogHandler)
+app.delete('/diary-log/:id', deleteLogHandler)
+app.put('/diary-log/:id', editLogHandler)
 app.get('/article/content/list', getArticleContentListHandler)
 app.post('/storage/preference', setStoragePreferenceHandler)
 app.get('/storage/preference', getStoragePreferenceHandler)

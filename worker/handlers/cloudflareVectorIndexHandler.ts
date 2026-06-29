@@ -49,7 +49,7 @@ export async function upsertVectorsToCloudflareIndexHandler(c: Context<{ Binding
                 method: 'POST',
                 headers: {
                 ...(incomingContentType ? { 'Content-Type': incomingContentType } : {}),
-                'x-repoName': githubRepoName,
+                'x-githubRepoName': githubRepoName,
                 'x-vaultPathInRepo': vaultPathInRepo,
                 'x-userId': userId,
                 },

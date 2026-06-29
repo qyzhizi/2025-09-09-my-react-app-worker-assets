@@ -558,7 +558,7 @@ export async function checkPathExists(
 
 export async function createEmptyFolderPathInRepoIfNotExists(
   githubUserName: string,
-  repoName: string,
+  githubRepoName: string,
   folderPath: string,
   accessToken: string,
 ) {
@@ -568,7 +568,7 @@ export async function createEmptyFolderPathInRepoIfNotExists(
     .replace(/^\/|\/$/g, '');
   const placeholderFilePath = `${normalizedFolderPath}/.gitkeep`;
   // Determine whether the file exists
-  const fileExists = await checkPathExists(githubUserName, repoName, placeholderFilePath, accessToken);
+  const fileExists = await checkPathExists(githubUserName, githubRepoName, placeholderFilePath, accessToken);
     if (fileExists) {
         console.log("File already exists, skipping creation.");
         return;
@@ -580,14 +580,14 @@ export async function createEmptyFolderPathInRepoIfNotExists(
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       // If it is a retry, recheck whether the file has been created by other concurrent requests.
       if (attempt > 0) {
-          const alreadyCreated = await checkPathExists(githubUserName, repoName, placeholderFilePath, accessToken);
+          const alreadyCreated = await checkPathExists(githubUserName, githubRepoName, placeholderFilePath, accessToken);
           if (alreadyCreated) {
               console.log("File was created by a concurrent request, skipping.");
               return;
           }
       }
       const res = await fetch(
-          `https://api.github.com/repos/${githubUserName}/${repoName}/contents/${placeholderFilePath}`,
+          `https://api.github.com/repos/${githubUserName}/${githubRepoName}/contents/${placeholderFilePath}`,
           {
               method: 'PUT',
               headers: {

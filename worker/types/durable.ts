@@ -10,17 +10,46 @@ export interface Task {
 
 export interface PushGitRepoTaskParams {
     id: string;
+    title: string;
+    content: string;
+    hash: string;
     commitMessage: string;
     accessToken: string;
     githubUserName: string;
-    repoName: string;
+    githubRepoName: string;
     vaultPathInRepo: string;
     vaultName: string;
     branch?: string;
-    title: string;
-    content: string;
     completed: boolean;
     createdAt: string;
+}
+
+export interface EditGitRepoTaskParams {
+    id: string;
+    title: string;
+    content: string;
+    hash: string;
+    originalId: string;
+    commitMessage: string;
+    accessToken: string;
+    githubUserName: string;
+    githubRepoName: string;
+    vaultPathInRepo: string;
+    vaultName: string;
+    branch?: string;
+    completed: boolean;
+    createdAt: string;
+}
+
+export interface DeleteArticleTaskParams {
+    userId: string;
+    articleId: string;
+    commitMessage: string;
+    accessToken: string;
+    githubUserName: string;
+    githubRepoName: string;
+    vaultPathInRepo: string;
+    vaultName: string;
 }
 
 export interface PushGitRepoTaskRespon {
