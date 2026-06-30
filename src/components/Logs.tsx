@@ -37,7 +37,7 @@ const Logs = () => {
 
   return (
     <div
-      className="h-fit max-w-4xl mb-2 relative w-full flex flex-col justify-start items-start bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700"
+      className="h-fit w-full max-w-full md:max-w-4xl mx-auto mb-2 relative flex flex-col justify-start items-start bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700"
       tabIndex={0}
     >
       <LogInput onLogSubmitted={handleLogSubmitted} />

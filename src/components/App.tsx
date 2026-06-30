@@ -35,7 +35,7 @@ export const App = ({ children }: { children: any }) => {
           onScrollRight={handleScrollRight}
         />
         {/* content */}
-        <div className="flex-1 flex flex-col w-full md:w-auto ">
+        <div className="flex-1 flex flex-col min-w-0 w-full md:w-auto ">
           <TopBar
             onMenuClick={() => setIsSidebarOpen(true)}
             onSearch={handleSearch}
@@ -43,7 +43,7 @@ export const App = ({ children }: { children: any }) => {
         
           <div 
             ref={contentRef}
-            className="flex flex-1 px-2 py-5 justify-center bg-gray-100 dark:bg-gray-900 text-black dark:text-white overflow-x-hidden"
+            className="flex flex-1 min-w-0 px-2 py-5 justify-center bg-gray-100 dark:bg-gray-900 text-black dark:text-white overflow-x-hidden"
           >
             {children}
           </div>
