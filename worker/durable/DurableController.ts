@@ -8,7 +8,7 @@ import { getMetaDataFromContent } from "@/utils/tools"
 import { createEmptyFolderPathInRepoIfNotExists } from "@/durable/github/githubApp";
 import { searchCommits } from "@/durable/github/searchCommits";
 import type { SearchCommitResult } from "@/durable/github/searchCommits";
-import { COMMITFILTER, PER_PAGE } from "@/ConstVar";
+import { COMMITFILTER, PER_PAGE, COMMIT_MESSAGE, DELETE_COMMIT_MESSAGE } from "@/ConstVar";
 import { edgeHash64, mapUuidQuick, hex16ToUuid, uuidToHex16 } from "@/utils/titleHash"
 import type { UpsertArticleContentParams } from "@/durable/repository/types";
 import {initQdrantCollection} from "@/durable/qdrant/initQdrant";
@@ -386,7 +386,7 @@ export class MyDurableObject extends DurableObject<Env> {
             await this.processDeleteArticle({
                 userId: userId,
                 articleId: originalId,
-                commitMessage: "[delete] by memoflow",
+                commitMessage: DELETE_COMMIT_MESSAGE,
                 accessToken,
                 githubUserName,
                 githubRepoName,
@@ -1119,7 +1119,7 @@ export class MyDurableObject extends DurableObject<Env> {
             accessToken,
             threshold: SEARCH_COMMITS_THRESHOLD,
             searchPath:`${vaultPathInRepo}/${vaultName}/`,
-            commitFilter:"[NEW] by memoflow",
+            commitFilter:COMMIT_MESSAGE,
             perPage:20,
         })
         const selectedMarkdownFileList = Array.from(new Set(commits

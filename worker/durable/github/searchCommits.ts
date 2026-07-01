@@ -63,17 +63,7 @@ function parseCommitItem(
   const message = item.commit?.message ?? "";
 
   // 如果外部传入了 commitFilter，做二次确认（Commits API 路径用得到）
-  if (commitFilter && !message.includes(commitFilter)) return null;
-
-  // 自动解析 hash（格式：${commitFilter}: <hash> 或 ${commitFilter} <hash>）
-  // const match = message.match(new RegExp(`${commitFilter}[:\s]+([a-f0-9]{6,})`, "i"));
-  // const hash = match ? match[1] : null;
-
-  // if (!hash) return null;
-
-  // const prefix2 = hash.substring(0, 2);
-  // const prefix4 = hash.substring(2, 4);
-  // const rest    = hash.substring(4);
+  if (commitFilter && !message.toLowerCase().includes(commitFilter.toLowerCase())) return null;
 
   return {
     sha:    item.sha,

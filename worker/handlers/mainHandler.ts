@@ -4,7 +4,7 @@ import { sign } from "hono/jwt";
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { getInstallationRepositories } from '@/durable/github/githubApp'
-import { DURABLE_NAME_PREFIX } from "@/ConstVar";
+import { DURABLE_NAME_PREFIX, COMMIT_MESSAGE, DELETE_COMMIT_MESSAGE } from "@/ConstVar";
 import { respondError } from "@/types/error"
 
 import { fetchAccessToken, fetchGitHubUserInfo } from '@/githubauth/tokenService'
@@ -327,7 +327,7 @@ export async function addLogHandler(c: Context<{ Bindings: Env, Variables: { use
     const hash =  extractedTitle ? edgeHash64(extractedTitle) : edgeHash64(extractedDate)
 
     const logEntry = {
-      message: "[NEW] by memoflow",
+      message: COMMIT_MESSAGE,
       content,
       hash,
       created_at: extractedDate,
@@ -398,7 +398,7 @@ export async function deleteLogHandler(c: Context<{Bindings: Env, Variables: {us
     const deleteArticleTaskParams: DeleteArticleTaskParams = {
       userId: c.get("userId"),
       articleId: id,
-      commitMessage: "[delete] by memoflow",
+      commitMessage: DELETE_COMMIT_MESSAGE,
       accessToken: githubAccessInfo.accessToken,
       githubUserName: githubAccessInfo.githubUserName,
       githubRepoName: githubAccessInfo.githubRepoName,
@@ -452,7 +452,7 @@ export async function editLogHandler(c: Context<{ Bindings: Env, Variables: { us
     const hash =  extractedTitle ? edgeHash64(extractedTitle) : edgeHash64(extractedDate)
 
     const logEntry = {
-      message: "[new] by memoflow",
+      message: COMMIT_MESSAGE,
       content,
       created_at: extractedDate,
       taskId: hash,
