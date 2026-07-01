@@ -54,7 +54,7 @@ const SearchLogs = () => {
             },
             body: JSON.stringify({
               query: keyword,
-              topK: 10
+              topK: 50 // cloudflare vector index has a limit of 50 results
             })
           }
         );

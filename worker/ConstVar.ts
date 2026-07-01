@@ -6,4 +6,4 @@ export const DELETE_COMMIT_MESSAGE = "[DELETE] by memoflow";
 export const PER_PAGE = 100;
 export const MAX_SEARCH_PAGES = 10;
 export const DURABLE_NAME_PREFIX = 'MemoflowDO_'
-export const EMBEDDING_MODEL = '@cf/qwen/qwen3-embedding-0.6b'
+// export const EMBEDDING_MODEL = '@cf/qwen/qwen3-embedding-0.6b'

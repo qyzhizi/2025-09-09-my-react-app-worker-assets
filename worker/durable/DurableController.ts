@@ -635,7 +635,7 @@ export class MyDurableObject extends DurableObject<Env> {
     async searchInQdrantVectorIndex(embedding: number[], topK: number, repoAndVaultPath: string, qdrantSettings: QdrantSettings): Promise<any> {
         let queryParam: QueryPointsParam = {
             query: embedding,
-            top: topK,
+            limit: topK,
             with_payload: true, // 返回 payload 数据
             with_vector: false, // 不返回向量数据以节省带宽
         };
