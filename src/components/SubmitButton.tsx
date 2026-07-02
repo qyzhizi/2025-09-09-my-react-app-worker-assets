@@ -4,20 +4,27 @@ import { Loader2 } from 'lucide-react';
 interface SubmitButtonProps {
   onClick: () => void;
   disabled?: boolean;
+  label?: string;
+  fullWidth?: boolean;
 }
 
-const SubmitButton: React.FC<SubmitButtonProps> = ({ onClick, disabled = false }) => {
+const SubmitButton: React.FC<SubmitButtonProps> = ({
+  onClick,
+  disabled = false,
+  label = 'Save',
+  fullWidth = false,
+}) => {
   return (
-    <div className="w-full flex flex-row justify-end items-center py-1 dark:border-t-zinc-500">
-      <div className="shrink-0 flex flex-row items-center">
+    <div className="w-full flex flex-row items-center py-1 dark:border-t-zinc-500">
+      <div className={`w-full ${fullWidth ? 'flex' : 'shrink-0 flex'} flex-row items-center ${fullWidth ? 'justify-start' : 'justify-end'}`}>
         <button
           id="submit"
-          className="flex flex-row items-center justify-center bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium px-3 py-1 rounded transition-opacity"
+          className={`flex flex-row items-center justify-center bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium px-3 py-1 rounded transition-opacity ${fullWidth ? 'w-full' : 'w-auto'}`}
           type="button"
           onClick={onClick}
           disabled={disabled}
         >
-          {disabled ? '保存中' : 'Save'}
+          {disabled ? '保存中' : label}
           <span className="flex flex-row ml-1">
             {disabled ? (
               <Loader2 className="w-4 h-4 animate-spin" />

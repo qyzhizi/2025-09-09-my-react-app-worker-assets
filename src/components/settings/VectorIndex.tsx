@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import SubmitButton from '@/components/SubmitButton';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface CollectioinStats {
@@ -471,14 +472,12 @@ function InitQdrantCollection() {
         </div>
       )}
 
-      <button
-        type="button"
+      <SubmitButton
         onClick={handleSaveAndInit}
         disabled={sending || loading}
-        className="w-full inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {sending ? '保存并初始化中…' : '保存并初始化 Qdrant'}
-      </button>
+        label={sending ? '保存并初始化中…' : '保存并初始化 Qdrant'}
+        fullWidth
+      />
     </div>
   );
 }

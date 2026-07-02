@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import {apiFetch} from "@/common";
+import SubmitButton from '@/components/SubmitButton';
 
 
 function VaultInfoCard({
@@ -42,9 +43,7 @@ interface GithubSettingsProps {
   setSuccessMessage: (message: string | null) => void;
 }
 
-export default function GithubSettings({
-  setSuccessMessage,
-  }: GithubSettingsProps) {
+export default function GithubSettings({}: GithubSettingsProps) {
   const [githubRepoFullName, setGitHubRepoFullName] = useState('');
   const [vaultInfo, setVaultInfo] = useState<{ vaultName?: string }>({});
   const [vaultPathInRepo, setVaultPathInRepo] = useState('');
@@ -52,6 +51,7 @@ export default function GithubSettings({
   const [loading, setLoading] = useState(true);
   const [repositories, setRepositories] = useState<Array<{id: number; name: string; full_name: string; html_url: string; description: string}>>([]);
   const [loadingRepos, setLoadingRepos] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // Pull repo list
   const handleFetchInstallationRepos = async () => {
@@ -103,8 +103,7 @@ export default function GithubSettings({
       alert('Please enter a vault path in repository');
       return;
     }
-    // console.log('Saving repo path:', githubRepoFullName);
-    // console.log('Saving vault path:', vaultPathInRepo);
+    setSaving(true);
     try {
       const res = await apiFetch("/api/save-repo-and-test-connection", {
         method: "POST",
@@ -137,6 +136,8 @@ export default function GithubSettings({
     } catch (error) {
       console.error("Failed to fetch user info:", error);
       alert('Failed to save repository');
+    } finally {
+      setSaving(false);
     }
 
   };
@@ -232,20 +233,6 @@ export default function GithubSettings({
               ))
             )}
           </select>
-
-          <button
-            type="button"
-            className="px-3 py-2 text-sm rounded-md bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
-            disabled={!githubRepoFullName}
-            onClick={() => {
-              navigator.clipboard.writeText(githubRepoFullName);
-              // Tip has been copied
-              setSuccessMessage('Copied to clipboard: ' + githubRepoFullName)
-              setTimeout(() => { setSuccessMessage(null); }, 3000);
-            }}
-          >
-            Copy
-          </button>
         </div>
 
         {loadingRepos && (
@@ -269,12 +256,14 @@ export default function GithubSettings({
         />
 
         {/* Save Button */}
-        <button
-          onClick={handleSave}
-          className="mt-4 w-full bg-blue-500 dark:bg-blue-600 hover:bg-blue-600 dark:hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-md text-sm transition-colors duration-200 shadow-sm"
-        >
-          Save Repo and Test Connection
-        </button>
+        <div className="mt-4">
+          <SubmitButton
+            onClick={handleSave}
+            disabled={saving}
+            label="Save Repo and Test Connection"
+            fullWidth
+          />
+        </div>
 
       </div>
     </div>

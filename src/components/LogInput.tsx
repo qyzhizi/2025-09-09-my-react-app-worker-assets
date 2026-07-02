@@ -25,9 +25,11 @@ function getTitleFromContent(content: string): string {
 
 const LogInput = ({ onLogSubmitted }: LogInputProps) => {
   const [log, setLog] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const handleSubmit = async () => {
-    if (log.trim() === '') return;
+    if (log.trim() === '' || saving) return;
+    setSaving(true);
   
     const now = new Date();
     const markdownDate = now.toISOString();
@@ -55,6 +57,8 @@ const LogInput = ({ onLogSubmitted }: LogInputProps) => {
       }
     } catch (error) {
       console.error('Request failed:', error);
+    } finally {
+      setSaving(false);
     }
   };  
 
@@ -63,7 +67,7 @@ const LogInput = ({ onLogSubmitted }: LogInputProps) => {
       {/* Use MarkdownEditor instead of TextAreaBox */}
       <MarkdownEditor value={log} onChange={setLog} />
       <hr className="hr_2 w-full" />
-      <SubmitButton onClick={handleSubmit} />
+      <SubmitButton onClick={handleSubmit} disabled={saving} />
     </div>
   );
 };
